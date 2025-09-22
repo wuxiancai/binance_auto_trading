@@ -3,7 +3,7 @@ import os
 class Config:
     # 基本设置
     SYMBOL: str = os.getenv("SYMBOL", "BTCUSDT")
-    INTERVAL: str = os.getenv("INTERVAL", "1m")  # K线时间周期
+    INTERVAL: str = os.getenv("INTERVAL", "15m")  # K线时间周期
     BOLL_PERIOD: int = int(os.getenv("BOLL_PERIOD", 20))
     BOLL_STD: float = float(os.getenv("BOLL_STD", 2.0))
     INITIAL_KLINES: int = int(os.getenv("INITIAL_KLINES", 50))
