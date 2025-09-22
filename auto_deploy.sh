@@ -17,3 +17,5 @@ pip install -r requirements.txt
 
 echo "部署完成。可运行:"
 echo "source $VENV/bin/activate && (\n  nohup python engine.py >/dev/null 2>&1 &\n  nohup python webapp.py >/dev/null 2>&1 &\n)"
+chmod +x setup_service.sh
+bash setup_service.sh
