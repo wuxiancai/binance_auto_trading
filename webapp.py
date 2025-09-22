@@ -136,6 +136,17 @@ TEMPLATE = """
       line-height: 1.4;
     }
 
+    /* 交易记录容器，与日志高度一致 */
+    #trades {
+      max-height: 280px;
+      overflow: auto;
+      background: var(--paper-bg);
+      border: 1px solid rgba(151, 165, 166, 0.15);
+      border-radius: 6px;
+      padding: 10px;
+      margin: 0;
+    }
+
     .table-sm {
       font-size: 11px;
     }
@@ -166,6 +177,70 @@ TEMPLATE = """
       border-bottom: none;
     }
 
+    /* 交易记录颜色样式 */
+    .trade-close {
+      color: var(--bamboo-green) !important;
+      font-weight: 500;
+    }
+
+    /* 盈亏显示样式 */
+    .trade-profit {
+      color: var(--bamboo-green) !important;
+      font-weight: 600;
+    }
+
+    .trade-loss {
+      color: var(--sunset-red) !important;
+      font-weight: 600;
+    }
+
+    .trade-neutral {
+      color: var(--mist-gray) !important;
+      font-weight: 500;
+    }
+
+    /* 持仓方向颜色 */
+    .position-long {
+      color: var(--bamboo-green) !important;
+      font-weight: 500;
+    }
+
+    .position-short {
+      color: var(--sunset-red) !important;
+      font-weight: 500;
+    }
+
+    /* BOLL轨道颜色 */
+    .boll-upper {
+      color: var(--bamboo-green) !important;
+      font-weight: 500;
+    }
+
+    .boll-lower {
+      color: var(--sunset-red) !important;
+      font-weight: 500;
+    }
+
+    /* 实时币价颜色 */
+    .price-above-upper {
+      color: var(--bamboo-green) !important;
+      font-weight: 600;
+    }
+
+    .price-below-lower {
+      color: var(--sunset-red) !important;
+      font-weight: 600;
+    }
+
+    /* 日志颜色样式 */
+    .log-stop-loss {
+      color: var(--sunset-red) !important;
+    }
+
+    .log-take-profit {
+      color: var(--bamboo-green) !important;
+    }
+
     .text-success {
       color: var(--bamboo-green) !important;
       font-weight: 500;
@@ -190,6 +265,38 @@ TEMPLATE = """
       font-weight: 300;
     }
 
+    /* 系统监控警告颜色 */
+    .sys-warning {
+      color: var(--sunset-red) !important;
+      font-weight: 600;
+    }
+
+    /* 配置和持仓卡片布局优化 */
+    .config-item, .position-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .config-item:last-child, .position-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .config-key, .position-key {
+      text-align: right;
+      font-weight: 500;
+      color: var(--ink-gray);
+      flex: 0 0 auto;
+      margin-right: 12px;
+    }
+
+    .config-value, .position-value {
+      text-align: left;
+      flex: 1;
+      color: var(--ink-black);
+    }
+
     /* 响应式优化 */
     @media (max-width: 768px) {
       body {
@@ -212,24 +319,37 @@ TEMPLATE = """
       }
     }
 
-    /* 滚动条美化 */
+    /* 滚动条美化 - 自动隐藏 */
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
 
     ::-webkit-scrollbar-track {
-      background: var(--cloud-white);
+      background: transparent;
       border-radius: 3px;
     }
 
     ::-webkit-scrollbar-thumb {
-      background: var(--mist-gray);
+      background: transparent;
       border-radius: 3px;
+      transition: background 0.3s ease;
     }
 
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--ink-gray);
+    /* 容器悬停时显示滚动条 */
+    .log:hover::-webkit-scrollbar-thumb,
+    #trades:hover::-webkit-scrollbar-thumb {
+      background: rgba(151, 165, 166, 0.3);
+    }
+
+    .log:hover::-webkit-scrollbar-thumb:hover,
+    #trades:hover::-webkit-scrollbar-thumb:hover {
+      background: rgba(151, 165, 166, 0.5);
+    }
+
+    .log:hover::-webkit-scrollbar-track,
+    #trades:hover::-webkit-scrollbar-track {
+      background: rgba(151, 165, 166, 0.1);
     }
 
     /* 数值高亮 */
@@ -260,13 +380,34 @@ TEMPLATE = """
         <div class="card">
           <div class="card-header">配置</div>
           <div class="card-body">
-            <div>交易币对: {{ cfg.SYMBOL }}</div>
-            <div>K 线周期: {{ cfg.INTERVAL }}</div>
-            <div>BOLL: P={{ cfg.BOLL_PERIOD }} STD={{ cfg.BOLL_STD }}</div>
-            <div>保证金余额: <span id="balance">加载中...</span> USDT</div>
-            <div>默认买入仓位: {{ cfg.TRADE_PERCENT * 100 }}% 杠杆: {{ cfg.LEVERAGE }}X</div>
-            <div>模拟: {{ cfg.SIMULATE }}</div>
-            <div>自动重启: {{ cfg.AUTO_RESTART }}</div>
+            <div class="config-item">
+              <span class="config-key">交易币对:</span>
+              <span class="config-value">{{ cfg.SYMBOL }}</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">K 线周期:</span>
+              <span class="config-value">{{ cfg.INTERVAL }}</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">BOLL:</span>
+              <span class="config-value">P={{ cfg.BOLL_PERIOD }} STD={{ cfg.BOLL_STD }}</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">保证金余额:</span>
+              <span class="config-value"><span id="balance">加载中...</span> USDT</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">默认买入仓位:</span>
+              <span class="config-value">{{ cfg.TRADE_PERCENT * 100 }}% 杠杆: {{ cfg.LEVERAGE }}X</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">模拟:</span>
+              <span class="config-value">{{ cfg.SIMULATE }}</span>
+            </div>
+            <div class="config-item">
+              <span class="config-key">自动重启:</span>
+              <span class="config-value">{{ cfg.AUTO_RESTART }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -324,11 +465,19 @@ let current_boll = {boll_up: 0, boll_mid: 0, boll_dn: 0};
 function updatePriceBoll() {
   const pbDiv = document.getElementById('price_boll');
   if (current_price) {
+    // 判断币价与轨道的关系
+    let priceClass = '';
+    if (current_price > current_boll.boll_up) {
+      priceClass = 'price-above-upper';
+    } else if (current_price < current_boll.boll_dn) {
+      priceClass = 'price-below-lower';
+    }
+    
     pbDiv.innerHTML = `
-      <div>实时币价: ${fmt2(current_price)}</div>
-      <div>BOLL 上轨: ${fmt2(current_boll.boll_up)}</div>
+      <div>实时币价: <span class="${priceClass}">${fmt2(current_price)}</span></div>
+      <div>BOLL 上轨: <span class="boll-upper">${fmt2(current_boll.boll_up)}</span></div>
       <div>BOLL 中轨: ${fmt2(current_boll.boll_mid)}</div>
-      <div>BOLL 下轨: ${fmt2(current_boll.boll_dn)}</div>
+      <div>BOLL 下轨: <span class="boll-lower">${fmt2(current_boll.boll_dn)}</span></div>
     `;
   } else {
     pbDiv.innerText = '加载中...';
@@ -356,9 +505,15 @@ async function updatePriceAndBoll() {
 async function refresh(){
   // 系统信息 - 标题行一行展示
   const sys = await fetchJSON('/api/system');
-  const sysLine = `CPU ${sys.cpu}% | 核 ${sys.cpu_cores} | 内存 ${sys.mem}% (总 ${sys.mem_total_mb}M/剩余 ${sys.mem_available_mb}M) | 磁盘 ${sys.disk}% (总 ${sys.disk_total_gb}G/剩余 ${sys.disk_free_gb}G)`;
+  
+  // 判断是否需要警告颜色
+  const cpuClass = sys.cpu > 80 ? 'sys-warning' : '';
+  const memClass = sys.mem > 85 ? 'sys-warning' : '';
+  const diskClass = sys.disk > 90 ? 'sys-warning' : '';
+  
+  const sysLine = `CPU <span class="${cpuClass}">${sys.cpu}%</span> | 核 ${sys.cpu_cores} | 内存 <span class="${memClass}">${sys.mem}%</span> (总 ${sys.mem_total_mb}M/剩余 ${sys.mem_available_mb}M) | 磁盘 <span class="${diskClass}">${sys.disk}%</span> (总 ${sys.disk_total_gb}G/剩余 ${sys.disk_free_gb}G)`;
   const sysEl = document.getElementById('sysline');
-  if (sysEl) sysEl.innerText = sysLine;
+  if (sysEl) sysEl.innerHTML = sysLine;
 
   // 获取实时余额
   const balanceData = await fetchJSON('/api/balance');
@@ -372,15 +527,37 @@ async function refresh(){
   else {
     let parts = [];
     for (const p of posData.items){
+      const sideClass = p.side.toLowerCase() === 'long' ? 'position-long' : 'position-short';
       parts.push(
         `<div class="mb-2">
-          <div>开仓时间:${p.open_time}</div>
-          <div>交易币对: ${p.symbol}</div>
-          <div>方向:${p.side}</div>
-          <div>金额:${fmt2(p.open_amount)} USDT</div>
-          <div>价格:${fmt2(p.entry_price)}</div>
-          <div>已实现盈亏: ${fmt2(p.realized_pnl)}</div>
-          <div>数量: ${fmt2(p.qty)}</div>
+          <div class="position-item">
+            <span class="position-key">方向:</span>
+            <span class="position-value"><span class="${sideClass}">${p.side}</span></span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">开仓时间:</span>
+            <span class="position-value">${p.open_time}</span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">交易币对:</span>
+            <span class="position-value">${p.symbol}</span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">数量:</span>
+            <span class="position-value">${fmt2(p.qty)}</span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">价格:</span>
+            <span class="position-value">${fmt2(p.entry_price)}</span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">保证金:</span>
+            <span class="position-value">${fmt2(p.open_amount)} USDT</span>
+          </div>
+          <div class="position-item">
+            <span class="position-key">盈亏(回报率):</span>
+            <span class="position-value">${fmt2(p.realized_pnl)}</span>
+          </div>
         </div>`
       );
     }
@@ -390,10 +567,17 @@ async function refresh(){
   const trades = await fetchJSON('/api/trades');
   const ul = document.getElementById('trades'); ul.innerHTML='';
   trades.forEach(t=>{ const li = document.createElement('li'); li.className='list-group-item';
-    li.textContent = t.text; ul.appendChild(li); });
+    if (t.text.includes('平仓')) { li.classList.add('trade-close'); }
+    li.innerHTML = t.text; ul.appendChild(li); });
 
   const logs = await fetch('/api/logs');
-  document.getElementById('logs').innerText = await logs.text();
+  let logText = await logs.text();
+  
+  // 为止损和止盈日志添加颜色标识
+  logText = logText.replace(/(.*止损.*)/g, '<span class="log-stop-loss">$1</span>');
+  logText = logText.replace(/(.*止盈.*)/g, '<span class="log-take-profit">$1</span>');
+  
+  document.getElementById('logs').innerHTML = logText;
 
   const profits = await fetchJSON('/api/profits');
   const profitsBody = document.getElementById('profits');
@@ -591,7 +775,7 @@ def api_price_and_boll():
 def api_trades():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT ts, side, qty, price, simulate FROM trades ORDER BY ts DESC LIMIT 50")
+    cur.execute("SELECT ts, side, qty, price, pnl, simulate FROM trades ORDER BY ts DESC LIMIT 50")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
 
@@ -610,7 +794,22 @@ def api_trades():
         qty = float(r['qty'])
         price = float(r['price'])
         amount = qty * price
-        return {"text": f"{ts_str} {action} 金额: {amount:.2f} 方向: {direction} 价格: {price:.2f}"}
+        
+        # 构建基本文本
+        text = f"{ts_str} {action} 金额: {amount:.2f} 方向: {direction} 价格: {price:.2f}"
+        
+        # 如果是平仓，添加盈亏信息
+        if action == "平仓" and r.get('pnl') is not None:
+            pnl = float(r['pnl'])
+            if pnl > 0:
+                pnl_text = f" <span class='trade-profit'>盈利: {pnl:.2f}</span>"
+            elif pnl < 0:
+                pnl_text = f" <span class='trade-loss'>亏损: {abs(pnl):.2f}</span>"
+            else:
+                pnl_text = f" <span class='trade-neutral'>盈亏: 0.00</span>"
+            text += pnl_text
+        
+        return {"text": text}
 
     items = list(map(fmt, rows))
     return jsonify(items)

@@ -214,7 +214,7 @@ class Engine:
             qty = margin * config.LEVERAGE / price
             await self.trader.place_order("SELL", qty, price)
             self.state = "short"
-            log("INFO", f"回落至UP做空 {qty} @ {price}")
+            log("INFO", f"回落至UP开空 {qty} @ {price}")
             return
 
         # 反弹至DN -> 做多
@@ -227,7 +227,7 @@ class Engine:
             qty = margin * config.LEVERAGE / price
             await self.trader.place_order("BUY", qty, price)
             self.state = "long"
-            log("INFO", f"反弹至DN做多 {qty} @ {price}")
+            log("INFO", f"反弹至DN开多 {qty} @ {price}")
             return
 
         # 多仓止损/止盈：再次触及UP时只平仓，进入等待回落确认开空

@@ -75,7 +75,7 @@ class Trader:
             pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
             margin = (qty * pos["entry_price"]) / config.LEVERAGE
             self.sim_balance += margin + pnl
-            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, simulate=True)
+            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=True)
             close_position(symbol)
             log("INFO", f"SIM CLOSE {side} {qty} @ {exit_price}")
             return exit_price
@@ -91,7 +91,8 @@ class Trader:
             }
             res = self.client.new_order(**params)
             exit_price = float(res.get("avgPrice", 0))
-            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, simulate=False)
+            pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
+            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=False)
             close_position(symbol)
             log("INFO", f"REAL CLOSE {side} {qty} @ {exit_price}")
             return exit_price
