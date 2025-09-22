@@ -372,7 +372,10 @@ TEMPLATE = """
 <body>
   <div class="container">
     <div class="d-flex flex-wrap justify-content-between align-items-center my-3 gap-2">
-      <h3 class="mb-0">币安合约自动交易 - 监控</h3>
+      <div class="d-flex align-items-baseline gap-2">
+        <h3 class="mb-0">兑复币安合约自动交易系统</h3>
+        <span style="font-size: 10px; color: var(--mist-gray);">兑复相生 财富自来 Powered by 无为</span>
+      </div>
       <div id="sysline" class="text-muted"></div>
     </div>
     <div class="row g-3">
