@@ -63,49 +63,53 @@ pip install -U pip
 pip install -r requirements.txt
 log_success "Python环境配置完成"
 
-# 2. 创建systemd服务文件
-log_info "步骤 2/5: 创建systemd服务文件..."
+# 2. 配置macOS launchd服务
+log_info "步骤 2/5: 配置系统服务..."
+
+SERVICE_NAME="com.binance.auto-trading"
+PLIST_FILE="$HOME/Library/LaunchAgents/${SERVICE_NAME}.plist"
+
+# 创建LaunchAgents目录（如果不存在）
+mkdir -p "$HOME/Library/LaunchAgents"
 
 # 停止现有服务（如果存在）
-if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+if launchctl list | grep -q "$SERVICE_NAME" 2>/dev/null; then
     log_info "停止现有服务..."
-    sudo systemctl stop "$SERVICE_NAME"
+    launchctl unload "$PLIST_FILE" 2>/dev/null || true
 fi
 
-# 创建服务文件
-sudo tee "$SERVICE_FILE" > /dev/null << EOF
-[Unit]
-Description=Binance Auto Trading System
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=forking
-User=$USER
-Group=$USER
-WorkingDirectory=$APP_DIR
-Environment=PATH=$VENV/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$APP_DIR/start_services.sh
-ExecStop=$APP_DIR/stop_services.sh
-ExecReload=/bin/kill -HUP \$MAINPID
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=$SERVICE_NAME
-
-# 安全设置
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$APP_DIR
-
-[Install]
-WantedBy=multi-user.target
+# 创建plist文件
+cat > "$PLIST_FILE" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$SERVICE_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$APP_DIR/start_services.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$APP_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$APP_DIR/logs/service.log</string>
+    <key>StandardErrorPath</key>
+    <string>$APP_DIR/logs/service_error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$VENV/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
 EOF
 
-log_success "服务文件创建完成: $SERVICE_FILE"
+log_success "服务文件创建完成: $PLIST_FILE"
 
 # 3. 创建启动脚本
 log_info "步骤 3/5: 创建服务管理脚本..."
@@ -177,28 +181,27 @@ chmod +x "$APP_DIR/stop_services.sh"
 
 log_success "服务管理脚本创建完成"
 
-# 4. 重载systemd并启用服务
-log_info "步骤 4/5: 配置systemd服务..."
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME"
-log_success "服务已启用，将在系统启动时自动运行"
+# 4. 加载并启用服务
+log_info "步骤 4/5: 加载launchd服务..."
+launchctl load "$PLIST_FILE"
+log_success "服务已加载，将在系统启动时自动运行"
 
 # 5. 启动服务
 log_info "步骤 5/5: 启动服务..."
-sudo systemctl start "$SERVICE_NAME"
+launchctl start "$SERVICE_NAME"
 
 # 等待服务启动
 sleep 3
 
 # 检查服务状态
-if systemctl is-active --quiet "$SERVICE_NAME"; then
+if launchctl list | grep -q "$SERVICE_NAME"; then
     log_success "服务启动成功！"
     log_info "服务状态:"
-    sudo systemctl status "$SERVICE_NAME" --no-pager -l
+    launchctl list | grep "$SERVICE_NAME"
 else
     log_error "服务启动失败！"
     log_info "查看服务状态:"
-    sudo systemctl status "$SERVICE_NAME" --no-pager -l
+    launchctl list | grep "$SERVICE_NAME" || echo "服务未找到"
     exit 1
 fi
 
@@ -206,14 +209,17 @@ echo ""
 log_success "🎉 部署完成！"
 echo ""
 log_info "服务管理命令:"
-echo "  启动服务: sudo systemctl start $SERVICE_NAME"
-echo "  停止服务: sudo systemctl stop $SERVICE_NAME"
-echo "  重启服务: sudo systemctl restart $SERVICE_NAME"
-echo "  查看状态: sudo systemctl status $SERVICE_NAME"
-echo "  查看日志: sudo journalctl -u $SERVICE_NAME -f"
+echo "  启动服务: launchctl start $SERVICE_NAME"
+echo "  停止服务: launchctl stop $SERVICE_NAME"
+echo "  重启服务: launchctl stop $SERVICE_NAME && launchctl start $SERVICE_NAME"
+echo "  查看状态: launchctl list | grep $SERVICE_NAME"
+echo "  卸载服务: launchctl unload $PLIST_FILE"
+echo "  重新加载: launchctl load $PLIST_FILE"
 echo ""
 log_info "应用日志位置:"
 echo "  Engine日志: $APP_DIR/logs/engine.log"
 echo "  WebApp日志: $APP_DIR/logs/webapp.log"
+echo "  服务日志: $APP_DIR/logs/service.log"
+echo "  服务错误日志: $APP_DIR/logs/service_error.log"
 echo ""
 log_info "Web界面访问: http://localhost:5000"
