@@ -17,6 +17,7 @@ class Trader:
         if not config.SIMULATE and UMFutures is not None and config.API_KEY:
             base_url = "https://testnet.binancefuture.com" if config.USE_TESTNET else None
             self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET, base_url=base_url)
+        self.sim_balance = config.DEFAULT_MARGIN if config.SIMULATE else 0.0
 
     async def place_order(self, side: str, qty: float, price: Optional[float] = None):
         ts = int(time.time() * 1000)
@@ -26,6 +27,8 @@ class Trader:
         if config.SIMULATE or self.client is None:
             # 直接记录交易与仓位
             mark_price = price if price is not None else 0.0
+            margin = (qty * mark_price) / config.LEVERAGE
+            self.sim_balance -= margin
             add_trade(ts, symbol, side, qty, mark_price, simulate=True)
             # 更新仓位
             if side == "BUY":
@@ -56,14 +59,52 @@ class Trader:
             log("ERROR", f"order failed: {e}")
             return {"error": str(e)}
 
-    async def close_all(self):
+    async def close_all(self, current_price: Optional[float] = None) -> float:
         pos = get_position(config.SYMBOL)
         if not pos:
-            return
+            return 0.0
         side = pos["side"]
         qty = pos["qty"]
         ts = int(time.time() * 1000)
+        symbol = config.SYMBOL
+        close_side = "SELL" if side == "long" else "BUY"
+
         # 模拟平仓
-        add_trade(ts, config.SYMBOL, f"CLOSE_{side}", qty, 0.0, simulate=True)
-        close_position(config.SYMBOL)
-        log("INFO", "SIM CLOSE POSITION")
+        if config.SIMULATE or self.client is None:
+            exit_price = current_price if current_price is not None else 0.0
+            pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
+            margin = (qty * pos["entry_price"]) / config.LEVERAGE
+            self.sim_balance += margin + pnl
+            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, simulate=True)
+            close_position(symbol)
+            log("INFO", f"SIM CLOSE {side} {qty} @ {exit_price}")
+            return exit_price
+
+        # 实盘平仓
+        try:
+            params = {
+                "symbol": symbol,
+                "side": close_side,
+                "type": "MARKET",
+                "quantity": qty,
+                "reduceOnly": True,
+            }
+            res = self.client.new_order(**params)
+            exit_price = float(res.get("avgPrice", 0))
+            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, simulate=False)
+            close_position(symbol)
+            log("INFO", f"REAL CLOSE {side} {qty} @ {exit_price}")
+            return exit_price
+        except Exception as e:  # pragma: no cover
+            log("ERROR", f"close failed: {e}")
+            return 0.0
+
+    def get_balance(self) -> float:
+        if config.SIMULATE or self.client is None:
+            return self.sim_balance  # 模拟初始余额
+        try:
+            acc = self.client.account()
+            return float(acc['availableBalance'])
+        except Exception as e:
+            log("ERROR", f"Failed to get balance: {e}")
+            return 0.0

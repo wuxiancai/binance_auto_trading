@@ -8,9 +8,10 @@ import pandas as pd
 import websockets
 
 from config import config
-from db import init_db, latest_kline_time, insert_kline, fetch_klines, log
+from db import init_db, latest_kline_time, insert_kline, fetch_klines, log, get_position, get_daily_profit, update_daily_profit
 from indicators import bollinger_bands
 from trader import Trader
+from datetime import datetime
 
 KLINE_WS_URL = "wss://fstream.binance.com/ws"  # futures stream
 
@@ -24,36 +25,92 @@ class Engine:
     def __init__(self):
         init_db()
         self.trader = Trader()
+        self.initial_balance = self.trader.get_balance()
+        pos = get_position(config.SYMBOL)
+        self.initial_capital = self.initial_balance
         self.state = "idle"  # idle / breakout_up / breakdown_dn / long / short
         self.prices: Deque[float] = deque(maxlen=1000)
         self.last_price: float = 0.0
+        # 评估频率节流（用于未收盘K线内的即时评估）
+        self._last_eval_ts: float = 0.0
+        self.socketio = None
+
+        if pos and (pos.get("side") in ("long", "short")):
+            self.state = pos["side"]
+            log("INFO", f"恢复状态为 {self.state}（检测到已有持仓）")
 
     async def bootstrap(self):
-        # 如果数据库没有足够K线，使用REST补齐 INITIAL_KLINES（按 SYMBOL+INTERVAL）
         try:
-            rows = fetch_klines(config.SYMBOL, limit=config.INITIAL_KLINES)
-            if len(rows) >= config.INITIAL_KLINES:
-                return
             if UMFutures is None:
+                print("UMFutures 未导入，无法获取历史 K 线。")
                 return
+        
             client = UMFutures()  # 公共端点无需密钥
-            data = await asyncio.to_thread(
-                client.klines, config.SYMBOL, config.INTERVAL, None, None, config.INITIAL_KLINES
-            )
-            last_time = latest_kline_time(config.SYMBOL, config.INTERVAL) or -1
-            inserts: List[Tuple] = []
-            for k in data:
-                ot, o, h, l, c, v, ct = int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), int(k[6])
-                if ot <= last_time:
-                    continue  # 去重
-                inserts.append((config.SYMBOL, config.INTERVAL, ot, o, h, l, c, v, ct))
-            if inserts:
-                insert_kline(inserts)
-                log("INFO", f"bootstrap 插入历史K线 {len(inserts)} 条: {config.SYMBOL} {config.INTERVAL}")
+        
+            def get_interval_ms(itv: str) -> int:
+                num = int(itv[:-1])
+                unit = itv[-1]
+                if unit == 'm':
+                    return num * 60000
+                elif unit == 'h':
+                    return num * 3600000
+                elif unit == 'd':
+                    return num * 86400000
+                else:
+                    raise ValueError(f"Unsupported interval: {itv}")
+        
+            interval_ms = get_interval_ms(config.INTERVAL)
+            last_time = latest_kline_time(config.SYMBOL, config.INTERVAL) or 0
+            current_time = int(time.time() * 1000)
+        
+            if last_time >= current_time - interval_ms:
+                print("K 线数据已是最新，无需补齐。")
+                return
+        
+            # 如果数据库为空，先获取初始 K 线
+            all_inserts: List[Tuple] = []
+            if last_time == 0:
+                data = await asyncio.to_thread(
+                    client.klines, config.SYMBOL, config.INTERVAL, limit=config.INITIAL_KLINES
+                )
+                print(f"从 API 获取到 {len(data)} 条初始 K 线数据。")
+                for k in data:
+                    ot = int(k[0])
+                    o, h, l, c, v, ct = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), int(k[6])
+                    all_inserts.append((config.SYMBOL, config.INTERVAL, ot, o, h, l, c, v, ct))
+                if data:
+                    last_time = max(int(d[0]) for d in data)
+        
+            # 补齐缺失 K 线
+            start_time = last_time + 1
+            while start_time < current_time - interval_ms:  # 只补齐到上一个已收盘 K 线
+                data = await asyncio.to_thread(
+                    client.klines, config.SYMBOL, config.INTERVAL, startTime=start_time, limit=500
+                )
+                if not data:
+                    break
+                print(f"从 API 获取到 {len(data)} 条补齐 K 线数据（从 {start_time} 开始）。")
+                for k in data:
+                    ot = int(k[0])
+                    if ot <= last_time:
+                        continue
+                    o, h, l, c, v, ct = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), int(k[6])
+                    all_inserts.append((config.SYMBOL, config.INTERVAL, ot, o, h, l, c, v, ct))
+                    last_time = ot
+                start_time = last_time + 1
+                if len(data) < 500:
+                    break
+        
+            if all_inserts:
+                insert_kline(all_inserts)
+                log("INFO", f"bootstrap 插入/补齐 {len(all_inserts)} 条 K 线: {config.SYMBOL} {config.INTERVAL}")
+                print(f"插入/补齐 {len(all_inserts)} 条 K 线。")
             else:
                 log("INFO", "bootstrap 无需插入K线（已最新）")
+                print("无需插入 K 线。")
         except Exception as e:  # pragma: no cover
             log("ERROR", f"bootstrap失败: {e}")
+            print(f"bootstrap 失败: {e}")
 
     async def run_ws(self):
         await self.bootstrap()
@@ -83,6 +140,14 @@ class Engine:
 
             self.last_price = price
             self.prices.append(price)
+            if self.socketio:
+                self.socketio.emit('price_update', {'price': price})
+
+            # 在未收盘期间也进行节流评估，以便尽早产生“突破/跌破”信号
+            now = time.time()
+            if now - self._last_eval_ts >= 1.0:  # 每秒最多一次
+                self._last_eval_ts = now
+                await self.evaluate()
 
             if is_closed:
                 insert_kline([
@@ -105,13 +170,31 @@ class Engine:
         if len(rows) < config.BOLL_PERIOD:
             return
         df = pd.DataFrame(rows)
+        # 计算基于闭合 K 线的 BOLL，以匹配 Binance 显示
         mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=0)
         last_mid = float(mid.iloc[-1])
         last_up = float(up.iloc[-1])
         last_dn = float(dn.iloc[-1])
-        price = float(df["close"].iloc[-1]) if self.last_price == 0 else self.last_price
+        price = float(self.last_price) if self.last_price != 0 else float(df["close"].iloc[-1])
+        if self.socketio:
+            self.socketio.emit('boll_update', {'boll_up': last_up, 'boll_mid': last_mid, 'boll_dn': last_dn})
 
-        # 状态机
+        # 先处理“持仓期间”的止盈/止损，避免在已有持仓时再次开仓
+        # 多仓：价格跌破DN -> 先平多，然后进入“跌破DN”状态等待反弹确认
+        if self.state == "long" and price < last_dn:
+            await self.close_and_update_profit(price)
+            self.state = "breakdown_dn"
+            log("INFO", f"多仓止损，跌破DN({last_dn:.2f}) -> 等待反弹至DN")
+            return
+
+        # 空仓：价格突破UP -> 先平空，然后进入“突破UP”状态等待回落确认确认
+        if self.state == "short" and price > last_up:
+            await self.close_and_update_profit(price)
+            self.state = "breakout_up"
+            log("INFO", f"空仓止损，突破UP({last_up:.2f}) -> 等待回落至UP")
+            return
+
+        # 状态机（允许在当前K线内完成“确认”）
         if price > last_up and self.state != "breakout_up":
             self.state = "breakout_up"
             log("INFO", f"突破UP，等待回落到UP：{last_up}")
@@ -123,31 +206,67 @@ class Engine:
 
         # 回落至UP -> 做空
         if self.state == "breakout_up" and price <= last_up:
-            await self.trader.place_order("SELL", config.QUANTITY, price)
+            balance = self.trader.get_balance()
+            if balance <= 0 or price <= 0:
+                log("WARNING", "Insufficient balance or invalid price for order")
+                return
+            margin = balance * config.TRADE_PERCENT
+            qty = margin * config.LEVERAGE / price
+            await self.trader.place_order("SELL", qty, price)
             self.state = "short"
-            log("INFO", f"回落至UP做空 @ {price}")
+            log("INFO", f"回落至UP做空 {qty} @ {price}")
             return
 
         # 反弹至DN -> 做多
         if self.state == "breakdown_dn" and price >= last_dn:
-            await self.trader.place_order("BUY", config.QUANTITY, price)
+            balance = self.trader.get_balance()
+            if balance <= 0 or price <= 0:
+                log("WARNING", "Insufficient balance or invalid price for order")
+                return
+            margin = balance * config.TRADE_PERCENT
+            qty = margin * config.LEVERAGE / price
+            await self.trader.place_order("BUY", qty, price)
             self.state = "long"
-            log("INFO", f"反弹至DN做多 @ {price}")
+            log("INFO", f"反弹至DN做多 {qty} @ {price}")
             return
 
-        # 多仓止损/止盈切空：再次触及UP
+        # 多仓止损/止盈：再次触及UP时只平仓，进入等待回落确认开空
         if self.state == "long" and price >= last_up:
-            await self.trader.place_order("SELL", config.QUANTITY, price)
-            self.state = "short"
-            log("INFO", f"多->空（触及UP） @ {price}")
+            await self.close_and_update_profit(price)
+            self.state = "breakout_up"  # 进入等待回落确认开空的状态
+            log("INFO", f"多仓止盈（触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
+            return
+ 
+        # 空仓止损/止盈：再次触及DN时只平仓，进入等待反弹确认开多
+        if self.state == "short" and price <= last_dn:
+            await self.close_and_update_profit(price)
+            self.state = "breakdown_dn"  # 进入等待反弹确认开多的状态
+            log("INFO", f"空仓止盈（触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
             return
 
-        # 空仓止损/止盈切多：再次触及DN
-        if self.state == "short" and price <= last_dn:
-            await self.trader.place_order("BUY", config.QUANTITY, price)
-            self.state = "long"
-            log("INFO", f"空->多（触及DN） @ {price}")
+    async def close_and_update_profit(self, price: float):
+        pos = get_position(config.SYMBOL)
+        if not pos:
             return
+        side = pos['side']
+        entry_price = pos['entry_price']
+        qty = pos['qty']
+        exit_price = await self.trader.close_all(price)
+        if exit_price <= 0:
+            return
+        this_profit = (exit_price - entry_price) * qty if side == 'long' else (entry_price - exit_price) * qty
+        date = datetime.now().date().isoformat()
+        daily = get_daily_profit(date)
+        if daily is None:
+            daily = {'trade_count': 0, 'profit': 0.0, 'profit_rate': 0.0}
+        daily['trade_count'] += 1
+        daily['profit'] += this_profit
+        current_balance = self.trader.get_balance()
+        if self.initial_capital > 0:
+            daily['profit_rate'] = ((current_balance - self.initial_balance) / self.initial_capital) * 100
+        else:
+            daily['profit_rate'] = 0.0
+        update_daily_profit(date, daily['trade_count'], daily['profit'], daily['profit_rate'])
 
 
 async def main():

@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS logs (
     level TEXT NOT NULL,
     message TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS daily_profits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE, -- e.g. '2024-09-22'
+    trade_count INTEGER DEFAULT 0,
+    profit REAL DEFAULT 0.0,
+    profit_rate REAL DEFAULT 0.0
+);
 """
 
 
@@ -118,13 +126,15 @@ def fetch_klines(symbol: str, limit: int = 500, interval: Optional[str] = None) 
     itv = interval or config.INTERVAL
     conn = get_conn()
     cur = conn.cursor()
+    # 取最近 limit 条（DESC），再反转为时间升序给指标使用
     cur.execute(
-        "SELECT open_time, open, high, low, close, volume FROM klines WHERE symbol=? AND interval=? ORDER BY open_time ASC LIMIT ?",
+        "SELECT open_time, open, high, low, close, volume FROM klines WHERE symbol=? AND interval=? ORDER BY open_time DESC LIMIT ?",
         (symbol, itv, limit),
     )
     rows = cur.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    ordered = list(reversed([dict(r) for r in rows]))
+    return ordered
 
 
 def log(level: str, message: str):
@@ -173,5 +183,47 @@ def close_position(symbol: str):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM positions WHERE symbol=?", (symbol,))
+    conn.commit()
+    conn.close()
+
+
+def get_daily_profit(date: str) -> Optional[Dict[str, Any]]:
+    """获取指定日期的盈利记录"""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM daily_profits WHERE date=?", (date,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_daily_profits(limit: int = 30) -> List[Dict[str, Any]]:
+    """获取最近的盈利记录，按日期降序排列"""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM daily_profits ORDER BY date DESC LIMIT ?", (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate: float):
+    """更新或创建指定日期的盈利记录"""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM daily_profits WHERE date=?", (date,))
+    row = cur.fetchone()
+    
+    if row:
+        cur.execute(
+            "UPDATE daily_profits SET trade_count=?, profit=?, profit_rate=? WHERE date=?",
+            (trade_count, profit, profit_rate, date)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO daily_profits(date, trade_count, profit, profit_rate) VALUES (?, ?, ?, ?)",
+            (date, trade_count, profit, profit_rate)
+        )
+    
     conn.commit()
     conn.close()

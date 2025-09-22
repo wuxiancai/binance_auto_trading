@@ -9,7 +9,8 @@ class Config:
     INITIAL_KLINES: int = int(os.getenv("INITIAL_KLINES", 50))
 
     # 交易相关
-    QUANTITY: float = float(os.getenv("QUANTITY", 0.001))  # 下单数量（合约张数或币量, 根据交易对调整）
+    DEFAULT_MARGIN: float = 1000.0  # 模拟默认保证金余额 USDT
+    TRADE_PERCENT: float = 0.1  # 交易金额占保证金的百分比
     LEVERAGE: int = int(os.getenv("LEVERAGE", 5))
     USE_TESTNET: bool = os.getenv("USE_TESTNET", "false").lower() == "true"
     SIMULATE: bool = os.getenv("SIMULATE", "true").lower() == "true"  # 模拟交易
