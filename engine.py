@@ -191,11 +191,25 @@ class Engine:
             log("INFO", f"多仓止损，跌破DN({last_dn:.2f}) -> 等待反弹至DN")
             return
 
-        # 空仓：价格突破UP -> 先平空，然后进入“突破UP”状态等待回落确认确认
+        # 多仓止盈：再次触及UP时先平仓，进入等待回落确认开空
+        if self.state == "long" and price >= last_up:
+            await self.close_and_update_profit(price)
+            self.state = "breakout_up"  # 进入等待回落确认开空的状态
+            log("INFO", f"多仓止盈（触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
+            return
+
+        # 空仓：价格突破UP -> 先平空，然后进入"突破UP"状态等待回落确认确认
         if self.state == "short" and price > last_up:
             await self.close_and_update_profit(price)
             self.state = "breakout_up"
             log("INFO", f"空仓止损，突破UP({last_up:.2f}) -> 等待回落至UP")
+            return
+
+        # 空仓止盈：再次触及DN时先平仓，进入等待反弹确认开多
+        if self.state == "short" and price <= last_dn:
+            await self.close_and_update_profit(price)
+            self.state = "breakdown_dn"  # 进入等待反弹确认开多的状态
+            log("INFO", f"空仓止盈（触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
             return
 
         # 状态机（允许在当前K线内完成"确认"）
@@ -252,19 +266,7 @@ class Engine:
             log("INFO", f"反弹至DN开多 {qty} @ {price}")
             return
 
-        # 多仓止损/止盈：再次触及UP时只平仓，进入等待回落确认开空
-        if self.state == "long" and price >= last_up:
-            await self.close_and_update_profit(price)
-            self.state = "breakout_up"  # 进入等待回落确认开空的状态
-            log("INFO", f"多仓止盈（触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
-            return
- 
-        # 空仓止损/止盈：再次触及DN时只平仓，进入等待反弹确认开多
-        if self.state == "short" and price <= last_dn:
-            await self.close_and_update_profit(price)
-            self.state = "breakdown_dn"  # 进入等待反弹确认开多的状态
-            log("INFO", f"空仓止盈（触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
-            return
+
 
     async def close_and_update_profit(self, price: float):
         pos = get_position(config.SYMBOL)
