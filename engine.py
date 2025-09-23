@@ -201,7 +201,7 @@ class Engine:
         # 状态机（允许在当前K线内完成"确认"）
         if price > last_up and self.state != "breakout_up":
             # 检查价格变化是否足够大
-            if abs(price - self.last_action_price) / self.last_action_price < self.price_threshold and self.last_action_price > 0:
+            if self.last_action_price > 0 and abs(price - self.last_action_price) / self.last_action_price < self.price_threshold:
                 return
             self.last_action_price = price
             self.state = "breakout_up"
@@ -209,7 +209,7 @@ class Engine:
             return
         if price < last_dn and self.state != "breakdown_dn":
             # 检查价格变化是否足够大
-            if abs(price - self.last_action_price) / self.last_action_price < self.price_threshold and self.last_action_price > 0:
+            if self.last_action_price > 0 and abs(price - self.last_action_price) / self.last_action_price < self.price_threshold:
                 return
             self.last_action_price = price
             self.state = "breakdown_dn"
@@ -223,8 +223,8 @@ class Engine:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
                 return
             balance = self.trader.get_balance()
-            if balance <= 0 or price <= 0:
-                log("WARNING", "Insufficient balance or invalid price for order")
+            if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
+                log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
                 return
             margin = balance * config.TRADE_PERCENT
             qty = margin * config.LEVERAGE / price
@@ -241,8 +241,8 @@ class Engine:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
                 return
             balance = self.trader.get_balance()
-            if balance <= 0 or price <= 0:
-                log("WARNING", "Insufficient balance or invalid price for order")
+            if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
+                log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
                 return
             margin = balance * config.TRADE_PERCENT
             qty = margin * config.LEVERAGE / price

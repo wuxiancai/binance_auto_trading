@@ -27,6 +27,9 @@ class Trader:
         if config.SIMULATE or self.client is None:
             # 直接记录交易与仓位
             mark_price = price if price is not None else 0.0
+            if config.LEVERAGE <= 0:
+                log("ERROR", "Invalid leverage configuration")
+                return
             margin = (qty * mark_price) / config.LEVERAGE
             self.sim_balance -= margin
             add_trade(ts, symbol, side, qty, mark_price, simulate=True)
@@ -73,6 +76,9 @@ class Trader:
         if config.SIMULATE or self.client is None:
             exit_price = current_price if current_price is not None else 0.0
             pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
+            if config.LEVERAGE <= 0:
+                log("ERROR", "Invalid leverage configuration")
+                return 0.0
             margin = (qty * pos["entry_price"]) / config.LEVERAGE
             self.sim_balance += margin + pnl
             add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=True)
