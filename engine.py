@@ -34,6 +34,10 @@ class Engine:
         # 评估频率节流（用于未收盘K线内的即时评估）
         self._last_eval_ts: float = 0.0
         self.socketio = None
+        self.last_trade_time = 0  # 上次交易时间戳
+        self.trade_cooldown = 60000  # 交易冷却时间60秒(毫秒)
+        self.last_action_price = 0  # 上次动作价格
+        self.price_threshold = 0.001  # 价格变化阈值(0.1%)
 
         if pos and (pos.get("side") in ("long", "short")):
             self.state = pos["side"]
@@ -194,18 +198,30 @@ class Engine:
             log("INFO", f"空仓止损，突破UP({last_up:.2f}) -> 等待回落至UP")
             return
 
-        # 状态机（允许在当前K线内完成“确认”）
+        # 状态机（允许在当前K线内完成"确认"）
         if price > last_up and self.state != "breakout_up":
+            # 检查价格变化是否足够大
+            if abs(price - self.last_action_price) / self.last_action_price < self.price_threshold and self.last_action_price > 0:
+                return
+            self.last_action_price = price
             self.state = "breakout_up"
             log("INFO", f"突破UP，等待回落到UP：{last_up}")
             return
         if price < last_dn and self.state != "breakdown_dn":
+            # 检查价格变化是否足够大
+            if abs(price - self.last_action_price) / self.last_action_price < self.price_threshold and self.last_action_price > 0:
+                return
+            self.last_action_price = price
             self.state = "breakdown_dn"
             log("INFO", f"跌破DN，等待反弹到DN：{last_dn}")
             return
 
         # 回落至UP -> 做空
         if self.state == "breakout_up" and price <= last_up:
+            current_time = int(time.time() * 1000)
+            if current_time - self.last_trade_time < self.trade_cooldown:
+                log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
+                return
             balance = self.trader.get_balance()
             if balance <= 0 or price <= 0:
                 log("WARNING", "Insufficient balance or invalid price for order")
@@ -213,12 +229,17 @@ class Engine:
             margin = balance * config.TRADE_PERCENT
             qty = margin * config.LEVERAGE / price
             await self.trader.place_order("SELL", qty, price)
+            self.last_trade_time = current_time
             self.state = "short"
             log("INFO", f"回落至UP开空 {qty} @ {price}")
             return
 
         # 反弹至DN -> 做多
         if self.state == "breakdown_dn" and price >= last_dn:
+            current_time = int(time.time() * 1000)
+            if current_time - self.last_trade_time < self.trade_cooldown:
+                log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
+                return
             balance = self.trader.get_balance()
             if balance <= 0 or price <= 0:
                 log("WARNING", "Insufficient balance or invalid price for order")
@@ -226,6 +247,7 @@ class Engine:
             margin = balance * config.TRADE_PERCENT
             qty = margin * config.LEVERAGE / price
             await self.trader.place_order("BUY", qty, price)
+            self.last_trade_time = current_time
             self.state = "long"
             log("INFO", f"反弹至DN开多 {qty} @ {price}")
             return
