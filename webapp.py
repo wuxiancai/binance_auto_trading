@@ -528,7 +528,7 @@ async function refresh(){
   const memClass = sys.mem > 85 ? 'sys-warning' : '';
   const diskClass = sys.disk > 90 ? 'sys-warning' : '';
   
-  const sysLine = `CPU <span class="${cpuClass}">${sys.cpu}%</span> | 核 ${sys.cpu_cores} | 内存 <span class="${memClass}">${sys.mem}%</span> (总 ${sys.mem_total_mb}M/剩余 ${sys.mem_available_mb}M) | 磁盘 <span class="${diskClass}">${sys.disk}%</span> (总 ${sys.disk_total_gb}G/剩余 ${sys.disk_free_gb}G)`;
+  const sysLine = `CPU <span class="${cpuClass}">${sys.cpu}%</span> | C${sys.cpu_cores} | MEM<span class="${memClass}">${sys.mem}%</span> (${sys.mem_total_mb}M/${sys.mem_available_mb}M) | Disk<span class="${diskClass}">${sys.disk}%</span> (${sys.disk_total_gb}G/${sys.disk_free_gb}G)`;
   const sysEl = document.getElementById('sysline');
   if (sysEl) sysEl.innerHTML = sysLine;
 
