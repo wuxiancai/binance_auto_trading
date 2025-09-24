@@ -55,15 +55,50 @@ install_venv_deps() {
 }
 
 # 创建虚拟环境，如果失败则尝试安装依赖
-if [ ! -d "$VENV" ]; then
+create_venv() {
     echo "正在创建虚拟环境..."
-    if ! $PY -m venv "$VENV" 2>/dev/null; then
+    echo "使用 Python: $($PY --version)"
+    echo "虚拟环境路径: $VENV"
+    
+    if $PY -m venv "$VENV" 2>&1; then
+        echo "虚拟环境创建成功"
+        return 0
+    else
         echo "虚拟环境创建失败，尝试安装依赖..."
         install_venv_deps
         echo "重新创建虚拟环境..."
-        $PY -m venv "$VENV"
+        if $PY -m venv "$VENV" 2>&1; then
+            echo "虚拟环境创建成功"
+            return 0
+        else
+            echo "错误: 虚拟环境创建失败"
+            echo "请检查:"
+            echo "1. Python 版本是否支持 venv 模块"
+            echo "2. 是否有足够的磁盘空间"
+            echo "3. 是否有写入权限"
+            return 1
+        fi
+    fi
+}
+
+if [ ! -d "$VENV" ]; then
+    if ! create_venv; then
+        echo "错误: 无法创建虚拟环境，部署失败"
+        exit 1
     fi
 fi
+
+# 验证虚拟环境是否正确创建
+if [ ! -f "$VENV/bin/activate" ]; then
+    echo "错误: 虚拟环境激活脚本不存在，重新创建..."
+    rm -rf "$VENV"
+    if ! create_venv; then
+        echo "错误: 无法创建虚拟环境，部署失败"
+        exit 1
+    fi
+fi
+
+echo "激活虚拟环境..."
 source "$VENV/bin/activate"
 
 pip install -U pip
