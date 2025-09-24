@@ -604,7 +604,7 @@ async function refresh(){
              </div>
              <div class="position-item">
                <span class="position-key">数量:</span>
-               <span class="position-value">${p.qty.toFixed(4)}</span>
+               <span class="position-value">${(Math.abs(p.qty_usdt) / p.entry_price).toFixed(4)}</span>
              </div>
              <div class="position-item">
                <span class="position-key">开仓价格:</span>

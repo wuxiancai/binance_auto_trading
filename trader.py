@@ -138,13 +138,15 @@ class Trader:
                 "side": close_side,
                 "type": "MARKET",
                 "quantity": qty,
-                "reduceOnly": True,
             }
             
-            # 只有在双向持仓模式下才添加positionSide参数
+            # 只有在双向持仓模式下才添加positionSide参数，不使用reduceOnly
             if self.dual_side_position:
                 position_side = "LONG" if side == "long" else "SHORT"
                 params["positionSide"] = position_side
+            else:
+                # 单向持仓模式下使用reduceOnly
+                params["reduceOnly"] = True
             res = self.client.futures_create_order(**params)
             exit_price = float(res.get("avgPrice", 0))
             
