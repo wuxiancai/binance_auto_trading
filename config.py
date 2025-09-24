@@ -13,7 +13,7 @@ class Config:
     TRADE_PERCENT: float = 0.2  # 交易金额占保证金的百分比
     LEVERAGE: int = int(os.getenv("LEVERAGE", 10))  # 杠杆倍数
     USE_TESTNET: bool = os.getenv("USE_TESTNET", "false").lower() == "true"
-    SIMULATE: bool = os.getenv("SIMULATE", "false").lower() == "true"  # 模拟交易
+    SIMULATE: bool = os.getenv("SIMULATE", "true").lower() == "true"  # 模拟交易
 
     # API 密钥
     API_KEY: str = os.getenv("BINANCE_API_KEY", "G5Z6Lv64080ByTgNcOXKvdwSRMsFDXvRlTnpMRnxJiFWlq8AFgThG95G0big5QGP")
