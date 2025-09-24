@@ -10,14 +10,14 @@ class Config:
 
     # 交易相关
     DEFAULT_MARGIN: float = 1000.0  # 模拟默认保证金余额 USDT
-    TRADE_PERCENT: float = 0.1  # 交易金额占保证金的百分比
-    LEVERAGE: int = int(os.getenv("LEVERAGE", 5))
+    TRADE_PERCENT: float = 0.2  # 交易金额占保证金的百分比
+    LEVERAGE: int = int(os.getenv("LEVERAGE", 10))  # 杠杆倍数
     USE_TESTNET: bool = os.getenv("USE_TESTNET", "false").lower() == "true"
-    SIMULATE: bool = os.getenv("SIMULATE", "true").lower() == "true"  # 模拟交易
+    SIMULATE: bool = os.getenv("SIMULATE", "false").lower() == "true"  # 模拟交易
 
     # API 密钥
-    API_KEY: str = os.getenv("BINANCE_API_KEY", "")
-    API_SECRET: str = os.getenv("BINANCE_API_SECRET", "")
+    API_KEY: str = os.getenv("BINANCE_API_KEY", "G5Z6Lv64080ByTgNcOXKvdwSRMsFDXvRlTnpMRnxJiFWlq8AFgThG95G0big5QGP")
+    API_SECRET: str = os.getenv("BINANCE_API_SECRET", "ujlrFgBx1LQuVcYcxzWPxX6jjsaQ0CFC62MbvqZ20445zFxLfTq7b66AErJ3shea")
 
     # 数据库与日志
     DB_PATH: str = os.getenv("DB_PATH", "data/trading.db")
