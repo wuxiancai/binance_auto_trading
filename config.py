@@ -10,7 +10,7 @@ class Config:
 
     # 交易相关
     DEFAULT_MARGIN: float = 1000.0  # 模拟默认保证金余额 USDT
-    TRADE_PERCENT: float = 0.2  # 交易金额占保证金的百分比
+    TRADE_PERCENT: float = 0.4  # 交易金额占保证金的百分比
     LEVERAGE: int = int(os.getenv("LEVERAGE", 10))  # 杠杆倍数
     USE_TESTNET: bool = os.getenv("USE_TESTNET", "false").lower() == "true"
     SIMULATE: bool = os.getenv("SIMULATE", "false").lower() == "true"  # 模拟交易

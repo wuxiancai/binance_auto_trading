@@ -30,6 +30,14 @@ class Trader:
             log("ERROR", "Binance client not initialized")
             return {"error": "Binance client not initialized"}
 
+        # 处理数量精度，BTCUSDT通常是3位小数
+        qty = round(qty, 3)
+        
+        # 确保数量大于最小值
+        if qty < 0.001:
+            log("WARNING", f"Order quantity {qty} is too small, minimum is 0.001")
+            return {"error": "Quantity too small"}
+
         # 真实交易
         try:
             params: Dict[str, Any] = {
@@ -63,6 +71,14 @@ class Trader:
 
         if self.client is None:
             log("ERROR", "Binance client not initialized")
+            return 0.0
+
+        # 处理数量精度，BTCUSDT通常是3位小数
+        qty = round(qty, 3)
+        
+        # 确保数量大于最小值
+        if qty < 0.001:
+            log("WARNING", f"Close quantity {qty} is too small, minimum is 0.001")
             return 0.0
 
         # 真实平仓
