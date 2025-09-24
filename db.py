@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS daily_profits (
     date TEXT NOT NULL UNIQUE, -- e.g. '2024-09-22'
     trade_count INTEGER DEFAULT 0,
     profit REAL DEFAULT 0.0,
-    profit_rate REAL DEFAULT 0.0
+    profit_rate REAL DEFAULT 0.0,
+    loss_count INTEGER DEFAULT 0,
+    profit_count INTEGER DEFAULT 0
 );
 """
 
@@ -80,6 +82,24 @@ def _migrate_schema(conn: sqlite3.Connection):
 def init_db():
     conn = get_conn()
     _migrate_schema(conn)
+    
+    # 数据库迁移：为现有的daily_profits表添加新字段
+    cur = conn.cursor()
+    try:
+        # 检查是否已存在loss_count字段
+        cur.execute("PRAGMA table_info(daily_profits)")
+        columns = [row[1] for row in cur.fetchall()]
+        
+        if 'loss_count' not in columns:
+            cur.execute("ALTER TABLE daily_profits ADD COLUMN loss_count INTEGER DEFAULT 0")
+            
+        if 'profit_count' not in columns:
+            cur.execute("ALTER TABLE daily_profits ADD COLUMN profit_count INTEGER DEFAULT 0")
+            
+        conn.commit()
+    except Exception as e:
+        print(f"数据库迁移警告: {e}")
+    
     conn.close()
 
 
@@ -207,7 +227,7 @@ def get_daily_profits(limit: int = 30) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate: float):
+def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate: float, loss_count: int = 0, profit_count: int = 0):
     """更新或创建指定日期的盈利记录"""
     conn = get_conn()
     cur = conn.cursor()
@@ -216,13 +236,13 @@ def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate:
     
     if row:
         cur.execute(
-            "UPDATE daily_profits SET trade_count=?, profit=?, profit_rate=? WHERE date=?",
-            (trade_count, profit, profit_rate, date)
+            "UPDATE daily_profits SET trade_count=?, profit=?, profit_rate=?, loss_count=?, profit_count=? WHERE date=?",
+            (trade_count, profit, profit_rate, loss_count, profit_count, date)
         )
     else:
         cur.execute(
-            "INSERT INTO daily_profits(date, trade_count, profit, profit_rate) VALUES (?, ?, ?, ?)",
-            (date, trade_count, profit, profit_rate)
+            "INSERT INTO daily_profits(date, trade_count, profit, profit_rate, loss_count, profit_count) VALUES (?, ?, ?, ?, ?, ?)",
+            (date, trade_count, profit, profit_rate, loss_count, profit_count)
         )
     
     conn.commit()

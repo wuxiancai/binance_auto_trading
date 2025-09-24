@@ -282,15 +282,26 @@ class Engine:
         date = datetime.now().date().isoformat()
         daily = get_daily_profit(date)
         if daily is None:
-            daily = {'trade_count': 0, 'profit': 0.0, 'profit_rate': 0.0}
+            daily = {'trade_count': 0, 'profit': 0.0, 'profit_rate': 0.0, 'loss_count': 0, 'profit_count': 0}
+        
+        # 更新交易次数和总盈利
         daily['trade_count'] += 1
         daily['profit'] += this_profit
+        
+        # 统计盈利和亏损次数
+        if this_profit > 0:
+            daily['profit_count'] = daily.get('profit_count', 0) + 1
+        elif this_profit < 0:
+            daily['loss_count'] = daily.get('loss_count', 0) + 1
+        
         current_balance = self.trader.get_balance()
         if self.initial_capital > 0:
             daily['profit_rate'] = ((current_balance - self.initial_balance) / self.initial_capital) * 100
         else:
             daily['profit_rate'] = 0.0
-        update_daily_profit(date, daily['trade_count'], daily['profit'], daily['profit_rate'])
+        
+        update_daily_profit(date, daily['trade_count'], daily['profit'], daily['profit_rate'], 
+                          daily.get('loss_count', 0), daily.get('profit_count', 0))
 
 
 async def main():
