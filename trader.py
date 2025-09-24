@@ -79,11 +79,12 @@ class Trader:
             if config.LEVERAGE <= 0:
                 log("ERROR", "Invalid leverage configuration")
                 return 0.0
-            margin = (qty * pos["entry_price"]) / config.LEVERAGE
-            self.sim_balance += margin + pnl
+            # 返还原始开仓保证金 + 盈亏
+            original_margin = (qty * pos["entry_price"]) / config.LEVERAGE
+            self.sim_balance += original_margin + pnl
             add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=True)
             close_position(symbol)
-            log("INFO", f"SIM CLOSE {side} {qty} @ {exit_price}")
+            log("INFO", f"SIM CLOSE {side} {qty} @ {exit_price}, PnL: {pnl:.2f}, 返还保证金: {original_margin:.2f}")
             return exit_price
 
         # 实盘平仓

@@ -796,21 +796,38 @@ def api_trades():
             direction = "-"
         qty = float(r['qty'])
         price = float(r['price'])
-        amount = qty * price
         
-        # 构建基本文本
-        text = f"{ts_str} {action} 金额: {amount:.2f} 方向: {direction} 价格: {price:.2f}"
-        
-        # 如果是平仓，添加盈亏信息
-        if action == "平仓" and r.get('pnl') is not None:
-            pnl = float(r['pnl'])
-            if pnl > 0:
-                pnl_text = f" <span class='trade-profit'>盈利: {pnl:.2f}</span>"
-            elif pnl < 0:
-                pnl_text = f" <span class='trade-loss'>亏损: {abs(pnl):.2f}</span>"
+        # 根据操作类型显示不同的金额信息
+        if action == "开仓":
+            # 开仓显示保证金金额（与trader.py中的计算方式一致）
+            margin = (qty * price) / config.LEVERAGE
+            text = f"{ts_str} {action} 保证金: {margin:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+        elif action == "平仓":
+            # 平仓显示平仓收益和盈亏
+            if r.get('pnl') is not None:
+                pnl = float(r['pnl'])
+                # 计算原始保证金（使用开仓价格，与trader.py一致）
+                original_margin = (qty * price) / config.LEVERAGE
+                close_amount = original_margin + pnl
+                
+                text = f"{ts_str} {action} 收益: {close_amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+                
+                # 添加盈亏信息
+                if pnl > 0:
+                    pnl_text = f" <span class='trade-profit'>盈利: {pnl:.2f}</span>"
+                elif pnl < 0:
+                    pnl_text = f" <span class='trade-loss'>亏损: {abs(pnl):.2f}</span>"
+                else:
+                    pnl_text = f" <span class='trade-neutral'>盈亏: 0.00</span>"
+                text += pnl_text
             else:
-                pnl_text = f" <span class='trade-neutral'>盈亏: 0.00</span>"
-            text += pnl_text
+                # 没有盈亏信息时，显示名义价值
+                amount = qty * price
+                text = f"{ts_str} {action} 名义价值: {amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+        else:
+            # 其他操作显示名义价值
+            amount = qty * price
+            text = f"{ts_str} {action} 金额: {amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
         
         return {"text": text}
 
