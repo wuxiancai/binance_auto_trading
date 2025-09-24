@@ -112,7 +112,16 @@ class Trader:
             return self.sim_balance  # 模拟初始余额
         try:
             acc = self.client.account()
-            return float(acc['availableBalance'])
+            if acc is None:
+                log("ERROR", "Failed to get balance: account() returned None")
+                return 0.0
+            
+            available_balance = acc.get('availableBalance')
+            if available_balance is None:
+                log("ERROR", f"Failed to get balance: availableBalance is None. Account data: {acc}")
+                return 0.0
+            
+            return float(available_balance)
         except Exception as e:
-            log("ERROR", f"Failed to get balance: {e}")
+            log("ERROR", f"Failed to get balance: {str(e)}")
             return 0.0

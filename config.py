@@ -16,8 +16,8 @@ class Config:
     SIMULATE: bool = os.getenv("SIMULATE", "false").lower() == "true"  # 模拟交易
 
     # API 密钥
-    API_KEY: str = os.getenv("BINANCE_API_KEY", "G5Z6Lv64080ByTgNcOXKvdwSRMsFDXvRlTnpMRnxJiFWlq8AFgThG95G0big5QGP")
-    API_SECRET: str = os.getenv("BINANCE_API_SECRET", "ujlrFgBx1LQuVcYcxzWPxX6jjsaQ0CFC62MbvqZ20445zFxLfTq7b66AErJ3shea")
+    API_KEY: str = os.getenv("BINANCE_API_KEY", "yHEbiLZVNTpX81Vc6UYPJpIsPFa6P461R1OVHHq7JcLs60B4GPcVSEq7Chw8OCGG")
+    API_SECRET: str = os.getenv("BINANCE_API_SECRET", "gwbbkf4uCPTJbMH6M3QZFJ4qtkqqzasg28vVZb20nkWwe7kDCZsSRSMjidHCb3Th")
 
     # 数据库与日志
     DB_PATH: str = os.getenv("DB_PATH", "data/trading.db")
