@@ -301,12 +301,6 @@ class Engine:
         daily['trade_count'] += 1
         daily['profit'] += this_profit
         
-        # 统计盈利和亏损次数
-        if this_profit > 0:
-            daily['profit_count'] = daily.get('profit_count', 0) + 1
-        elif this_profit < 0:
-            daily['loss_count'] = daily.get('loss_count', 0) + 1
-        
         # 计算当日手续费总和
         from db import get_conn
         conn = get_conn()
@@ -316,13 +310,22 @@ class Engine:
         total_fees = total_fees_result[0] if total_fees_result and total_fees_result[0] else 0.0
         conn.close()
         
+        # 计算净利润（扣除手续费后的利润）
+        net_profit = daily['profit'] - total_fees
+        
+        # 统计盈利和亏损次数（基于净利润）
+        if net_profit > 0:
+            daily['profit_count'] = daily.get('profit_count', 0) + 1
+        elif net_profit < 0:
+            daily['loss_count'] = daily.get('loss_count', 0) + 1
+        
         current_balance = self.trader.get_balance()
         if self.initial_capital > 0:
             daily['profit_rate'] = ((current_balance - self.initial_balance) / self.initial_capital) * 100
         else:
             daily['profit_rate'] = 0.0
         
-        update_daily_profit(date, daily['trade_count'], daily['profit'], daily['profit_rate'], 
+        update_daily_profit(date, daily['trade_count'], net_profit, daily['profit_rate'], 
                           daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees)
         return True  # 平仓成功
 
