@@ -14,34 +14,23 @@ except Exception:  # pragma: no cover
 class Trader:
     def __init__(self):
         self.client = None
-        if not config.SIMULATE and UMFutures is not None and config.API_KEY:
-            base_url = "https://testnet.binancefuture.com" if config.USE_TESTNET else None
-            self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET, base_url=base_url)
-        self.sim_balance = config.DEFAULT_MARGIN if config.SIMULATE else 0.0
+        if UMFutures is not None and config.API_KEY:
+            if config.USE_TESTNET:
+                # 对于测试网，需要使用不同的初始化方式
+                self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET, base_url="https://testnet.binancefuture.com")
+            else:
+                # 对于主网，使用默认初始化
+                self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET)
 
     async def place_order(self, side: str, qty: float, price: Optional[float] = None):
         ts = int(time.time() * 1000)
         symbol = config.SYMBOL
 
-        # 模拟模式
-        if config.SIMULATE or self.client is None:
-            # 直接记录交易与仓位
-            mark_price = price if price is not None else 0.0
-            if config.LEVERAGE <= 0:
-                log("ERROR", "Invalid leverage configuration")
-                return
-            margin = (qty * mark_price) / config.LEVERAGE
-            self.sim_balance -= margin
-            add_trade(ts, symbol, side, qty, mark_price, simulate=True)
-            # 更新仓位
-            if side == "BUY":
-                set_position(symbol, "long", qty, mark_price, ts)
-            elif side == "SELL":
-                set_position(symbol, "short", qty, mark_price, ts)
-            log("INFO", f"SIM ORDER {side} {qty} @ {mark_price}")
-            return {"simulate": True, "side": side, "qty": qty, "price": mark_price}
+        if self.client is None:
+            log("ERROR", "Binance client not initialized")
+            return {"error": "Binance client not initialized"}
 
-        # 实盘
+        # 真实交易
         try:
             params: Dict[str, Any] = {
                 "symbol": symbol,
@@ -72,22 +61,11 @@ class Trader:
         symbol = config.SYMBOL
         close_side = "SELL" if side == "long" else "BUY"
 
-        # 模拟平仓
-        if config.SIMULATE or self.client is None:
-            exit_price = current_price if current_price is not None else 0.0
-            pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
-            if config.LEVERAGE <= 0:
-                log("ERROR", "Invalid leverage configuration")
-                return 0.0
-            # 返还原始开仓保证金 + 盈亏
-            original_margin = (qty * pos["entry_price"]) / config.LEVERAGE
-            self.sim_balance += original_margin + pnl
-            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=True)
-            close_position(symbol)
-            log("INFO", f"SIM CLOSE {side} {qty} @ {exit_price}, PnL: {pnl:.2f}, 返还保证金: {original_margin:.2f}")
-            return exit_price
+        if self.client is None:
+            log("ERROR", "Binance client not initialized")
+            return 0.0
 
-        # 实盘平仓
+        # 真实平仓
         try:
             params = {
                 "symbol": symbol,
@@ -108,20 +86,51 @@ class Trader:
             return 0.0
 
     def get_balance(self) -> float:
-        if config.SIMULATE or self.client is None:
-            return self.sim_balance  # 模拟初始余额
+        if self.client is None:
+            log("ERROR", "Binance client not initialized")
+            return 0.0
         try:
-            acc = self.client.account()
-            if acc is None:
-                log("ERROR", "Failed to get balance: account() returned None")
+            # 使用balance()方法获取余额信息
+            balance_info = self.client.balance()
+            if balance_info is None:
+                log("ERROR", "Failed to get balance: balance() returned None")
                 return 0.0
             
-            available_balance = acc.get('availableBalance')
-            if available_balance is None:
-                log("ERROR", f"Failed to get balance: availableBalance is None. Account data: {acc}")
+            # 查找USDT余额
+            usdt_balance = None
+            for item in balance_info:
+                if item.get('asset') == 'USDT':
+                    usdt_balance = float(item.get('balance', 0))
+                    break
+            
+            if usdt_balance is None:
+                log("ERROR", "Failed to get USDT balance from balance info")
                 return 0.0
             
-            return float(available_balance)
+            return usdt_balance
         except Exception as e:
             log("ERROR", f"Failed to get balance: {str(e)}")
             return 0.0
+
+    def get_positions(self):
+        """获取实际持仓信息"""
+        if self.client is None:
+            log("ERROR", "Binance client not initialized")
+            return []
+        
+        try:
+            positions = self.client.get_position_risk()
+            if positions is None:
+                log("ERROR", "Failed to get positions: get_position_risk() returned None")
+                return []
+            
+            # 只返回有持仓的交易对
+            active_positions = []
+            for pos in positions:
+                position_amt = float(pos.get('positionAmt', 0))
+                if position_amt != 0:
+                    active_positions.append(pos)
+            return active_positions
+        except Exception as e:
+            log("ERROR", f"Failed to get positions: {str(e)}")
+            return []

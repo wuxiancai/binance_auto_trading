@@ -1,3 +1,5 @@
+print("=== webapp.py 启动开始 ===")
+
 import threading
 import time
 import psutil
@@ -7,14 +9,25 @@ import asyncio
 from flask import Flask, render_template_string, jsonify
 import logging
 
+print("基础模块导入完成")
+
 from config import config
+print(f"config导入完成，WEB_PORT={config.WEB_PORT}")
+
 from db import get_conn, init_db, latest_kline_time, get_position, get_daily_profits
+print("db模块导入完成")
+
 from engine import Engine
+print("engine模块导入完成")
+
 from indicators import bollinger_bands
 import pandas as pd
 from db import fetch_klines
+print("其他模块导入完成")
 
+print("开始初始化数据库...")
 init_db()
+print("数据库初始化完成")
 
 app = Flask(__name__)
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -401,12 +414,13 @@ TEMPLATE = """
             </div>
             <div class="config-item">
               <span class="config-key">默认买入仓位:</span>
-              <span class="config-value">{{ cfg.TRADE_PERCENT * 100 }}% 杠杆: {{ cfg.LEVERAGE }}X</span>
+              <span class="config-value">{{ cfg.TRADE_PERCENT * 100 }}% </span>
             </div>
             <div class="config-item">
-              <span class="config-key">模拟:</span>
-              <span class="config-value">{{ cfg.SIMULATE }}</span>
+              <span class="config-key">杠杆:</span>
+              <span class="config-value">{{ cfg.LEVERAGE }}X</span>
             </div>
+
             <div class="config-item">
               <span class="config-key">自动重启:</span>
               <span class="config-value">{{ cfg.AUTO_RESTART }}</span>
@@ -530,39 +544,38 @@ async function refresh(){
   else {
     let parts = [];
     for (const p of posData.items){
-      const sideClass = p.side.toLowerCase() === 'long' ? 'position-long' : 'position-short';
-      parts.push(
-        `<div class="mb-2">
-          <div class="position-item">
-            <span class="position-key">方向:</span>
-            <span class="position-value"><span class="${sideClass}">${p.side}</span></span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">开仓时间:</span>
-            <span class="position-value">${p.open_time}</span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">交易币对:</span>
-            <span class="position-value">${p.symbol}</span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">数量:</span>
-            <span class="position-value">${fmt2(p.qty)}</span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">价格:</span>
-            <span class="position-value">${fmt2(p.entry_price)}</span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">保证金:</span>
-            <span class="position-value">${fmt2(p.open_amount)} USDT</span>
-          </div>
-          <div class="position-item">
-            <span class="position-key">盈亏(回报率):</span>
-            <span class="position-value">${fmt2(p.realized_pnl)}</span>
-          </div>
-        </div>`
-      );
+       const sideClass = p.side.toLowerCase() === 'long' ? 'position-long' : 'position-short';
+       // 强平价格颜色：short=绿色，long=红色
+       const liquidationClass = p.side.toLowerCase() === 'short' ? 'text-success' : 'text-danger';
+       parts.push(
+         `<div class="mb-2">
+           <div class="position-item">
+             <span class="position-key">方向:</span>
+             <span class="position-value"><span class="${sideClass}">${p.side}</span></span>
+           </div>
+           
+           <div class="position-item">
+             <span class="position-key">数量:</span>
+             <span class="position-value">${fmt2(p.qty_usdt)} USDT</span>
+           </div>
+           <div class="position-item">
+             <span class="position-key">价格:</span>
+             <span class="position-value">${fmt2(p.entry_price)}</span>
+           </div>
+           <div class="position-item">
+             <span class="position-key">保证金:</span>
+             <span class="position-value">${fmt2(p.open_amount)} USDT</span>
+           </div>
+           <div class="position-item">
+             <span class="position-key">未实现盈亏:</span>
+             <span class="position-value ${p.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}">${fmt2(p.unrealized_pnl)} USDT</span>
+           </div>
+           <div class="position-item">
+             <span class="position-key">强平价格:</span>
+             <span class="position-value ${liquidationClass}">${fmt2(p.liquidation_price)}</span>
+           </div>
+         </div>`
+       );
     }
     posDiv.innerHTML = parts.join('<hr class="my-2">');
   }
@@ -650,45 +663,85 @@ def api_position_compat():
 # 多交易币对持仓列表
 @app.get("/api/positions")
 def api_positions():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT symbol, side, qty, entry_price, ts FROM positions ORDER BY symbol ASC")
-    rows = [dict(r) for r in cur.fetchall()]
-    # 预取各symbol最新价格
-    latest = {}
-    for r in rows:
-        cur.execute("SELECT close FROM klines WHERE symbol=? AND interval=? ORDER BY open_time DESC LIMIT 1", (r['symbol'], config.INTERVAL))
-        k = cur.fetchone()
-        latest[r['symbol']] = float(k['close']) if k else r['entry_price']
-    # 计算
     items = []
-    for r in rows:
-        side_raw = (r['side'] or '').lower()
-        side = 'long' if side_raw == 'long' else ('short' if side_raw == 'short' else side_raw)
-        last_price = latest.get(r['symbol'], r['entry_price'])
-        qty = float(r['qty'])
-        entry = float(r['entry_price'])
-        # 未实现盈亏
-        if side == 'long':
-            unrealized = (last_price - entry) * qty
-        elif side == 'short':
-            unrealized = (entry - last_price) * qty
-        else:
-            unrealized = 0.0
-        # 已实现盈亏（基于trades.pnl汇总，若未维护则为0）
-        cur.execute("SELECT COALESCE(SUM(pnl),0) AS s FROM trades WHERE symbol=?", (r['symbol'],))
-        realized = float(cur.fetchone()['s'])
-        items.append({
-            'symbol': r['symbol'],
-            'side': side,
-            'qty': qty,
-            'entry_price': entry,
-            'open_amount': qty * entry,
-            'open_time': fmt_ts_utc8(r['ts']),
-            'unrealized_pnl': unrealized,
-            'realized_pnl': realized,
-        })
-    conn.close()
+    
+    # 优先从实际API获取持仓信息
+    if hasattr(app, 'engine_instance') and app.engine_instance and app.engine_instance.trader:
+        try:
+            api_positions = app.engine_instance.trader.get_positions()
+            for pos in api_positions:
+                symbol = pos.get('symbol', '')
+                position_amt = float(pos.get('positionAmt', 0))
+                entry_price = float(pos.get('entryPrice', 0))
+                unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+                liquidation_price = float(pos.get('liquidationPrice', 0))
+                
+                # 确定持仓方向
+                side = 'long' if position_amt > 0 else 'short'
+                # 数量显示为USDT计价（持仓数量 * 入场价格）
+                qty_usdt = position_amt * entry_price
+                
+                # 计算保证金（数量 * 价格 / 杠杆）
+                open_amount = (abs(position_amt) * entry_price) / config.LEVERAGE if config.LEVERAGE > 0 else abs(position_amt) * entry_price
+                
+                items.append({
+                    'symbol': symbol,
+                    'side': side,
+                    'qty_usdt': qty_usdt,
+                    'entry_price': entry_price,
+                    'open_amount': open_amount,
+                    'unrealized_pnl': unrealized_pnl,
+                    'liquidation_price': liquidation_price,
+                })
+        except Exception as e:
+            print(f"获取API持仓失败: {e}")
+    
+    # 如果没有API持仓或获取失败，从数据库获取
+    if not items:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, side, qty, entry_price, ts FROM positions ORDER BY symbol ASC")
+        rows = [dict(r) for r in cur.fetchall()]
+        
+        # 预取各symbol最新价格
+        latest = {}
+        for r in rows:
+            cur.execute("SELECT close FROM klines WHERE symbol=? AND interval=? ORDER BY open_time DESC LIMIT 1", (r['symbol'], config.INTERVAL))
+            k = cur.fetchone()
+            latest[r['symbol']] = float(k['close']) if k else r['entry_price']
+        
+        # 计算
+        for r in rows:
+            side_raw = (r['side'] or '').lower()
+            side = 'long' if side_raw == 'long' else ('short' if side_raw == 'short' else side_raw)
+            last_price = latest.get(r['symbol'], r['entry_price'])
+            qty = float(r['qty'])
+            entry = float(r['entry_price'])
+            
+            # 未实现盈亏
+            if side == 'long':
+                unrealized = (last_price - entry) * qty
+            elif side == 'short':
+                unrealized = (entry - last_price) * qty
+            else:
+                unrealized = 0.0
+            
+            # 已实现盈亏（基于trades.pnl汇总，若未维护则为0）
+            cur.execute("SELECT COALESCE(SUM(pnl),0) AS s FROM trades WHERE symbol=?", (r['symbol'],))
+            realized = float(cur.fetchone()['s'])
+            
+            items.append({
+                'symbol': r['symbol'],
+                'side': side,
+                'qty': qty,
+                'entry_price': entry,
+                'open_amount': qty * entry,
+                'open_time': fmt_ts_utc8(r['ts']),
+                'unrealized_pnl': unrealized,
+                'realized_pnl': realized,
+            })
+        conn.close()
+    
     return jsonify({'items': items})
 
 
@@ -861,10 +914,10 @@ def api_balance():
             balance = app.engine_instance.trader.get_balance()
         else:
             # 如果没有 engine 实例，返回默认值
-            balance = config.DEFAULT_MARGIN if config.SIMULATE else 0.0
+            balance = 0.0
         return jsonify({"balance": balance})
     except Exception as e:
-        return jsonify({"balance": config.DEFAULT_MARGIN if config.SIMULATE else 0.0, "error": str(e)})
+        return jsonify({"balance": 0.0, "error": str(e)})
 
 
 def _ensure_port_free(port: int):
