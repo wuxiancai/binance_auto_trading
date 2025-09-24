@@ -16,9 +16,12 @@ from datetime import datetime
 KLINE_WS_URL = "wss://fstream.binance.com/ws"  # futures stream
 
 try:
-    from binance.um_futures import UMFutures  # type: ignore
-except Exception:  # pragma: no cover
-    UMFutures = None  # type: ignore
+    from binance.client import Client as UMFutures  # type: ignore
+except ImportError:
+    try:
+        from binance.um_futures import UMFutures  # type: ignore
+    except ImportError:  # pragma: no cover
+        UMFutures = None  # type: ignore
 
 
 class Engine:
@@ -75,7 +78,7 @@ class Engine:
             all_inserts: List[Tuple] = []
             if last_time == 0:
                 data = await asyncio.to_thread(
-                    client.klines, config.SYMBOL, config.INTERVAL, limit=config.INITIAL_KLINES
+                    client.futures_klines, symbol=config.SYMBOL, interval=config.INTERVAL, limit=config.INITIAL_KLINES
                 )
                 print(f"从 API 获取到 {len(data)} 条初始 K 线数据。")
                 for k in data:
@@ -89,7 +92,7 @@ class Engine:
             start_time = last_time + 1
             while start_time < current_time - interval_ms:  # 只补齐到上一个已收盘 K 线
                 data = await asyncio.to_thread(
-                    client.klines, config.SYMBOL, config.INTERVAL, startTime=start_time, limit=500
+                    client.futures_klines, symbol=config.SYMBOL, interval=config.INTERVAL, startTime=start_time, limit=500
                 )
                 if not data:
                     break

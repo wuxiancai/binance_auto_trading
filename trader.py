@@ -6,9 +6,12 @@ from config import config
 from db import add_trade, set_position, get_position, close_position, log
 
 try:
-    from binance.um_futures import UMFutures  # type: ignore
-except Exception:  # pragma: no cover
-    UMFutures = None
+    from binance.client import Client as UMFutures  # type: ignore
+except ImportError:
+    try:
+        from binance.um_futures import UMFutures  # type: ignore
+    except ImportError:  # pragma: no cover
+        UMFutures = None
 
 
 class Trader:
@@ -18,10 +21,10 @@ class Trader:
         if UMFutures is not None and config.API_KEY:
             if config.USE_TESTNET:
                 # 对于测试网，需要使用不同的初始化方式
-                self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET, base_url="https://testnet.binancefuture.com")
+                self.client = UMFutures(api_key=config.API_KEY, api_secret=config.API_SECRET, testnet=True)
             else:
                 # 对于主网，使用默认初始化
-                self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET)
+                self.client = UMFutures(api_key=config.API_KEY, api_secret=config.API_SECRET)
             
             # 尝试开启双向持仓模式
             self._setup_dual_side_position()
@@ -33,7 +36,7 @@ class Trader:
         
         try:
             # 尝试开启双向持仓模式
-            self.client.change_position_mode(dualSidePosition="true")
+            self.client.futures_change_position_mode(dualSidePosition="true")
             self.dual_side_position = True
             log("INFO", "双向持仓模式已开启")
         except Exception as e:
@@ -75,7 +78,7 @@ class Trader:
             if self.dual_side_position:
                 position_side = "LONG" if side == "BUY" else "SHORT"
                 params["positionSide"] = position_side
-            res = self.client.new_order(**params)
+            res = self.client.futures_create_order(**params)
             avg_price = float(res.get("avgPrice", 0)) if isinstance(res, dict) else 0.0
             
             # 如果avgPrice为0，尝试获取当前市场价格
@@ -85,7 +88,7 @@ class Trader:
             elif avg_price == 0.0:
                 # 如果没有提供价格，尝试获取当前市场价格
                 try:
-                    ticker = self.client.ticker_price(symbol=symbol)
+                    ticker = self.client.futures_symbol_ticker(symbol=symbol)
                     avg_price = float(ticker.get("price", 0))
                     log("WARNING", f"Order avgPrice is 0, using current market price: {avg_price}")
                 except Exception as e:
@@ -142,7 +145,7 @@ class Trader:
             if self.dual_side_position:
                 position_side = "LONG" if side == "long" else "SHORT"
                 params["positionSide"] = position_side
-            res = self.client.new_order(**params)
+            res = self.client.futures_create_order(**params)
             exit_price = float(res.get("avgPrice", 0))
             
             # 如果avgPrice为0，尝试获取当前市场价格
@@ -152,7 +155,7 @@ class Trader:
             elif exit_price == 0.0:
                 # 如果没有提供当前价格，尝试获取市场价格
                 try:
-                    ticker = self.client.ticker_price(symbol=symbol)
+                    ticker = self.client.futures_symbol_ticker(symbol=symbol)
                     exit_price = float(ticker.get("price", 0))
                     log("WARNING", f"Close avgPrice is 0, using current market price: {exit_price}")
                 except Exception as e:
@@ -176,8 +179,8 @@ class Trader:
             log("ERROR", "Binance client not initialized")
             return 0.0
         try:
-            # 使用balance()方法获取余额信息
-            balance_info = self.client.balance()
+            # 使用futures_account_balance()方法获取余额信息
+            balance_info = self.client.futures_account_balance()
             if balance_info is None:
                 log("ERROR", "Failed to get balance: balance() returned None")
                 return 0.0
@@ -205,7 +208,7 @@ class Trader:
             return []
         
         try:
-            positions = self.client.get_position_risk()
+            positions = self.client.futures_position_information()
             if positions is None:
                 log("ERROR", "Failed to get positions: get_position_risk() returned None")
                 return []
