@@ -446,7 +446,7 @@ TEMPLATE = """
           <div class="card-body">
             <table class="table table-sm">
               <thead>
-                <tr><th>日期</th><th>交易总次数</th><th>亏损次数</th><th>盈利次数</th><th>总盈利</th><th>利润率</th></tr>
+                <tr><th>日期</th><th>交易总次数</th><th>亏损次数</th><th>盈利次数</th><th>手续费</th><th>总盈利</th><th>利润率</th></tr>
               </thead>
               <tbody id="profits"></tbody>
             </table>
@@ -608,8 +608,10 @@ async function refresh(){
     const countTd = document.createElement('td'); countTd.textContent = p.trade_count; tr.appendChild(countTd);
     const lossCountTd = document.createElement('td'); lossCountTd.textContent = p.loss_count || 0; 
     lossCountTd.className = 'text-danger'; tr.appendChild(lossCountTd);
-    const profitCountTd = document.createElement('td'); profitCountTd.textContent = p.profit_count || 0; 
+    const profitCountTd = document.createElement('td'); profitCountTd.textContent = p.profit_count || 0;
     profitCountTd.className = 'text-success'; tr.appendChild(profitCountTd);
+    const feesTd = document.createElement('td'); feesTd.textContent = fmt2(p.total_fees || 0);
+    feesTd.className = 'text-danger'; tr.appendChild(feesTd);
     const profitTd = document.createElement('td'); profitTd.textContent = fmt2(p.profit);
     profitTd.className = p.profit >= 0 ? 'text-success' : 'text-danger'; tr.appendChild(profitTd);
     const rateTd = document.createElement('td'); rateTd.textContent = fmt2(p.profit_rate) + '%'; tr.appendChild(rateTd);

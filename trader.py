@@ -92,7 +92,10 @@ class Trader:
                     log("ERROR", f"Failed to get market price: {e}")
                     avg_price = 0.0
             
-            add_trade(ts, symbol, side, qty, avg_price, simulate=False)
+            # 计算手续费：交易金额的0.05%
+            trade_amount = qty * avg_price
+            fee = trade_amount * 0.0005  # 0.05% = 0.0005
+            add_trade(ts, symbol, side, qty, avg_price, simulate=False, fee=fee)
             if side == "BUY":
                 set_position(symbol, "long", qty, avg_price, ts)
             else:
@@ -157,7 +160,10 @@ class Trader:
                     exit_price = 0.0
             
             pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
-            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=False)
+            # 计算手续费：交易金额的0.05%
+            trade_amount = qty * exit_price
+            fee = trade_amount * 0.0005  # 0.05% = 0.0005
+            add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=False, fee=fee)
             close_position(symbol)
             log("INFO", f"REAL CLOSE {side} {qty} @ {exit_price}")
             return exit_price

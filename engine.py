@@ -307,6 +307,15 @@ class Engine:
         elif this_profit < 0:
             daily['loss_count'] = daily.get('loss_count', 0) + 1
         
+        # 计算当日手续费总和
+        from db import get_conn
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT SUM(fee) FROM trades WHERE date(datetime(ts, 'unixepoch')) = ?", (date,))
+        total_fees_result = cur.fetchone()
+        total_fees = total_fees_result[0] if total_fees_result and total_fees_result[0] else 0.0
+        conn.close()
+        
         current_balance = self.trader.get_balance()
         if self.initial_capital > 0:
             daily['profit_rate'] = ((current_balance - self.initial_balance) / self.initial_capital) * 100
@@ -314,7 +323,7 @@ class Engine:
             daily['profit_rate'] = 0.0
         
         update_daily_profit(date, daily['trade_count'], daily['profit'], daily['profit_rate'], 
-                          daily.get('loss_count', 0), daily.get('profit_count', 0))
+                          daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees)
         return True  # 平仓成功
 
 
