@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
 class Trader:
     def __init__(self):
         self.client = None
+        self.dual_side_position = False  # 是否支持双向持仓
         if UMFutures is not None and config.API_KEY:
             if config.USE_TESTNET:
                 # 对于测试网，需要使用不同的初始化方式
@@ -21,6 +22,29 @@ class Trader:
             else:
                 # 对于主网，使用默认初始化
                 self.client = UMFutures(key=config.API_KEY, secret=config.API_SECRET)
+            
+            # 尝试开启双向持仓模式
+            self._setup_dual_side_position()
+
+    def _setup_dual_side_position(self):
+        """设置双向持仓模式"""
+        if self.client is None:
+            return
+        
+        try:
+            # 尝试开启双向持仓模式
+            self.client.change_position_mode(dualSidePosition="true")
+            self.dual_side_position = True
+            log("INFO", "双向持仓模式已开启")
+        except Exception as e:
+            error_msg = str(e)
+            # 如果错误信息包含"No need to change position side"，说明已经是双向持仓模式
+            if "No need to change position side" in error_msg or "-4059" in error_msg:
+                self.dual_side_position = True
+                log("INFO", "账户已是双向持仓模式")
+            else:
+                self.dual_side_position = False
+                log("WARNING", f"无法开启双向持仓模式: {e}，将使用单向持仓模式")
 
     async def place_order(self, side: str, qty: float, price: Optional[float] = None):
         ts = int(time.time() * 1000)
@@ -40,18 +64,34 @@ class Trader:
 
         # 真实交易
         try:
-            # 根据交易方向设置持仓方向
-            position_side = "LONG" if side == "BUY" else "SHORT"
-            
             params: Dict[str, Any] = {
                 "symbol": symbol,
                 "side": side,
                 "type": "MARKET",
                 "quantity": qty,
-                "positionSide": position_side,
             }
+            
+            # 只有在双向持仓模式下才添加positionSide参数
+            if self.dual_side_position:
+                position_side = "LONG" if side == "BUY" else "SHORT"
+                params["positionSide"] = position_side
             res = self.client.new_order(**params)
             avg_price = float(res.get("avgPrice", 0)) if isinstance(res, dict) else 0.0
+            
+            # 如果avgPrice为0，尝试获取当前市场价格
+            if avg_price == 0.0 and price is not None:
+                avg_price = price
+                log("WARNING", f"Order avgPrice is 0, using provided price: {price}")
+            elif avg_price == 0.0:
+                # 如果没有提供价格，尝试获取当前市场价格
+                try:
+                    ticker = self.client.ticker_price(symbol=symbol)
+                    avg_price = float(ticker.get("price", 0))
+                    log("WARNING", f"Order avgPrice is 0, using current market price: {avg_price}")
+                except Exception as e:
+                    log("ERROR", f"Failed to get market price: {e}")
+                    avg_price = 0.0
+            
             add_trade(ts, symbol, side, qty, avg_price, simulate=False)
             if side == "BUY":
                 set_position(symbol, "long", qty, avg_price, ts)
@@ -87,19 +127,35 @@ class Trader:
 
         # 真实平仓
         try:
-            # 根据持仓方向设置positionSide
-            position_side = "LONG" if side == "long" else "SHORT"
-            
             params = {
                 "symbol": symbol,
                 "side": close_side,
                 "type": "MARKET",
                 "quantity": qty,
-                "positionSide": position_side,
                 "reduceOnly": True,
             }
+            
+            # 只有在双向持仓模式下才添加positionSide参数
+            if self.dual_side_position:
+                position_side = "LONG" if side == "long" else "SHORT"
+                params["positionSide"] = position_side
             res = self.client.new_order(**params)
             exit_price = float(res.get("avgPrice", 0))
+            
+            # 如果avgPrice为0，尝试获取当前市场价格
+            if exit_price == 0.0 and current_price is not None:
+                exit_price = current_price
+                log("WARNING", f"Close avgPrice is 0, using provided current_price: {current_price}")
+            elif exit_price == 0.0:
+                # 如果没有提供当前价格，尝试获取市场价格
+                try:
+                    ticker = self.client.ticker_price(symbol=symbol)
+                    exit_price = float(ticker.get("price", 0))
+                    log("WARNING", f"Close avgPrice is 0, using current market price: {exit_price}")
+                except Exception as e:
+                    log("ERROR", f"Failed to get market price for close: {e}")
+                    exit_price = 0.0
+            
             pnl = (exit_price - pos["entry_price"]) * qty if side == "long" else (pos["entry_price"] - exit_price) * qty
             add_trade(ts, symbol, f"CLOSE_{side.upper()}", qty, exit_price, pnl, simulate=False)
             close_position(symbol)
