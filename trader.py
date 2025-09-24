@@ -40,11 +40,15 @@ class Trader:
 
         # 真实交易
         try:
+            # 根据交易方向设置持仓方向
+            position_side = "LONG" if side == "BUY" else "SHORT"
+            
             params: Dict[str, Any] = {
                 "symbol": symbol,
                 "side": side,
                 "type": "MARKET",
                 "quantity": qty,
+                "positionSide": position_side,
             }
             res = self.client.new_order(**params)
             avg_price = float(res.get("avgPrice", 0)) if isinstance(res, dict) else 0.0
@@ -83,11 +87,15 @@ class Trader:
 
         # 真实平仓
         try:
+            # 根据持仓方向设置positionSide
+            position_side = "LONG" if side == "long" else "SHORT"
+            
             params = {
                 "symbol": symbol,
                 "side": close_side,
                 "type": "MARKET",
                 "quantity": qty,
+                "positionSide": position_side,
                 "reduceOnly": True,
             }
             res = self.client.new_order(**params)
