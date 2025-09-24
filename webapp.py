@@ -473,7 +473,31 @@ TEMPLATE = """
     </div>
   </div>
 <script>
-async function fetchJSON(url){ const r = await fetch(url); return r.json(); }
+// 改进的fetchJSON函数，增加错误处理和重试机制
+async function fetchJSON(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, { 
+        timeout: 5000,
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.warn(`API调用失败 (${url}), 尝试 ${i + 1}/${retries}:`, error.message);
+      if (i === retries - 1) {
+        throw error;
+      }
+      // 等待一段时间后重试
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
+}
+
 function fmt2(v){ return Number(v).toFixed(2); }
 
 let current_price = 0;
@@ -481,7 +505,7 @@ let current_boll = {boll_up: 0, boll_mid: 0, boll_dn: 0};
 
 function updatePriceBoll() {
   const pbDiv = document.getElementById('price_boll');
-  if (current_price) {
+  if (current_price && current_price > 0) {
     // 判断币价与轨道的关系
     let priceClass = '';
     if (current_price > current_boll.boll_up) {
@@ -505,118 +529,171 @@ function updatePriceBoll() {
 async function updatePriceAndBoll() {
   try {
     const data = await fetchJSON('/api/price_and_boll');
-    if (data.price) {
+    if (data && data.price && data.price > 0) {
       current_price = data.price;
       current_boll = {
-        boll_up: data.boll_up,
-        boll_mid: data.boll_mid,
-        boll_dn: data.boll_dn
+        boll_up: data.boll_up || 0,
+        boll_mid: data.boll_mid || 0,
+        boll_dn: data.boll_dn || 0
       };
       updatePriceBoll();
+    } else {
+      console.warn('价格数据无效:', data);
     }
   } catch (e) {
     console.error('获取价格数据失败:', e);
+    // 保持当前显示，不更新为"加载中..."
   }
 }
 
 async function refresh(){
   // 系统信息 - 标题行一行展示
-  const sys = await fetchJSON('/api/system');
-  
-  // 判断是否需要警告颜色
-  const cpuClass = sys.cpu > 80 ? 'sys-warning' : '';
-  const memClass = sys.mem > 85 ? 'sys-warning' : '';
-  const diskClass = sys.disk > 90 ? 'sys-warning' : '';
-  
-  const sysLine = `CPU <span class="${cpuClass}">${sys.cpu}%</span> | C${sys.cpu_cores} | MEM<span class="${memClass}">${sys.mem}%</span> (${sys.mem_total_mb}M/${sys.mem_available_mb}M) | Disk<span class="${diskClass}">${sys.disk}%</span> (${sys.disk_total_gb}G/${sys.disk_free_gb}G)`;
-  const sysEl = document.getElementById('sysline');
-  if (sysEl) sysEl.innerHTML = sysLine;
-
-  // 获取实时余额
-  const balanceData = await fetchJSON('/api/balance');
-  const balanceEl = document.getElementById('balance');
-  if (balanceEl) balanceEl.innerText = fmt2(balanceData.balance);
-
-  // positions (multi-symbol)
-  const posData = await fetchJSON('/api/positions');
-  const posDiv = document.getElementById('pos');
-  if (!posData.items || posData.items.length === 0){ posDiv.innerText = '无持仓'; }
-  else {
-    let parts = [];
-    for (const p of posData.items){
-       const sideClass = p.side.toLowerCase() === 'long' ? 'position-long' : 'position-short';
-       // 强平价格颜色：short=绿色，long=红色
-       const liquidationClass = p.side.toLowerCase() === 'short' ? 'text-success' : 'text-danger';
-       parts.push(
-         `<div class="mb-2">
-           <div class="position-item">
-             <span class="position-key">方向:</span>
-             <span class="position-value"><span class="${sideClass}">${p.side}</span></span>
-           </div>
-           
-           <div class="position-item">
-             <span class="position-key">持仓金额:</span>
-             <span class="position-value">${fmt2(p.qty_usdt)} USDT</span>
-           </div>
-           <div class="position-item">
-             <span class="position-key">数量:</span>
-             <span class="position-value">${p.qty.toFixed(4)}</span>
-           </div>
-           <div class="position-item">
-             <span class="position-key">开仓价格:</span>
-             <span class="position-value">${fmt2(p.entry_price)}</span>
-           </div>
-           <div class="position-item">
-             <span class="position-key">保证金:</span>
-             <span class="position-value">${fmt2(p.open_amount)} USDT</span>
-           </div>
-           <div class="position-item">
-             <span class="position-key">未实现盈亏:</span>
-             <span class="position-value ${p.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}">${fmt2(p.unrealized_pnl)} USDT</span>
-           </div>
-           <div class="position-item">
-             <span class="position-key">强平价格:</span>
-             <span class="position-value ${liquidationClass}">${fmt2(p.liquidation_price)}</span>
-           </div>
-         </div>`
-       );
+  try {
+    const sys = await fetchJSON('/api/system');
+    if (sys) {
+      // 判断是否需要警告颜色
+      const cpuClass = sys.cpu > 80 ? 'sys-warning' : '';
+      const memClass = sys.mem > 85 ? 'sys-warning' : '';
+      const diskClass = sys.disk > 90 ? 'sys-warning' : '';
+      
+      const sysLine = `CPU <span class="${cpuClass}">${sys.cpu}%</span> | C${sys.cpu_cores} | MEM<span class="${memClass}">${sys.mem}%</span> (${sys.mem_total_mb}M/${sys.mem_available_mb}M) | Disk<span class="${diskClass}">${sys.disk}%</span> (${sys.disk_total_gb}G/${sys.disk_free_gb}G)`;
+      const sysEl = document.getElementById('sysline');
+      if (sysEl) sysEl.innerHTML = sysLine;
     }
-    posDiv.innerHTML = parts.join('<hr class="my-2">');
+  } catch (e) {
+    console.error('获取系统信息失败:', e);
   }
 
-  const trades = await fetchJSON('/api/trades');
-  const ul = document.getElementById('trades'); ul.innerHTML='';
-  trades.forEach(t=>{ const li = document.createElement('li'); li.className='list-group-item';
-    if (t.text.includes('平仓')) { li.classList.add('trade-close'); }
-    li.innerHTML = t.text; ul.appendChild(li); });
+  // 获取实时余额
+  try {
+    const balanceData = await fetchJSON('/api/balance');
+    if (balanceData && typeof balanceData.balance !== 'undefined') {
+      const balanceEl = document.getElementById('balance');
+      if (balanceEl) balanceEl.innerText = fmt2(balanceData.balance);
+    }
+  } catch (e) {
+    console.error('获取余额失败:', e);
+    const balanceEl = document.getElementById('balance');
+    if (balanceEl && balanceEl.innerText === '加载中...') {
+      balanceEl.innerText = '获取失败';
+    }
+  }
 
-  const logs = await fetch('/api/logs');
-  let logText = await logs.text();
-  
-  // 为止损和止盈日志添加颜色标识
-  logText = logText.replace(/(.*止损.*)/g, '<span class="log-stop-loss">$1</span>');
-  logText = logText.replace(/(.*止盈.*)/g, '<span class="log-take-profit">$1</span>');
-  
-  document.getElementById('logs').innerHTML = logText;
+  // positions (multi-symbol)
+  try {
+    const posData = await fetchJSON('/api/positions');
+    const posDiv = document.getElementById('pos');
+    if (!posData || !posData.items || posData.items.length === 0) { 
+      posDiv.innerText = '无持仓'; 
+    } else {
+      let parts = [];
+      for (const p of posData.items){
+         const sideClass = p.side.toLowerCase() === 'long' ? 'position-long' : 'position-short';
+         // 强平价格颜色：short=绿色，long=红色
+         const liquidationClass = p.side.toLowerCase() === 'short' ? 'text-success' : 'text-danger';
+         parts.push(
+           `<div class="mb-2">
+             <div class="position-item">
+               <span class="position-key">方向:</span>
+               <span class="position-value"><span class="${sideClass}">${p.side}</span></span>
+             </div>
+             
+             <div class="position-item">
+               <span class="position-key">持仓金额:</span>
+               <span class="position-value">${fmt2(p.qty_usdt)} USDT</span>
+             </div>
+             <div class="position-item">
+               <span class="position-key">数量:</span>
+               <span class="position-value">${p.qty.toFixed(4)}</span>
+             </div>
+             <div class="position-item">
+               <span class="position-key">开仓价格:</span>
+               <span class="position-value">${fmt2(p.entry_price)}</span>
+             </div>
+             <div class="position-item">
+               <span class="position-key">保证金:</span>
+               <span class="position-value">${fmt2(p.open_amount)} USDT</span>
+             </div>
+             <div class="position-item">
+               <span class="position-key">未实现盈亏:</span>
+               <span class="position-value ${p.unrealized_pnl >= 0 ? 'text-success' : 'text-danger'}">${fmt2(p.unrealized_pnl)} USDT</span>
+             </div>
+             <div class="position-item">
+               <span class="position-key">强平价格:</span>
+               <span class="position-value ${liquidationClass}">${fmt2(p.liquidation_price)}</span>
+             </div>
+           </div>`
+         );
+      }
+      posDiv.innerHTML = parts.join('<hr class="my-2">');
+    }
+  } catch (e) {
+    console.error('获取持仓失败:', e);
+    const posDiv = document.getElementById('pos');
+    if (posDiv && posDiv.innerText === '加载中...') {
+      posDiv.innerText = '获取失败';
+    }
+  }
 
-  const profits = await fetchJSON('/api/profits');
-  const profitsBody = document.getElementById('profits');
-  profitsBody.innerHTML = '';
-  profits.forEach(p => {
-    const tr = document.createElement('tr');
-    const dateTd = document.createElement('td'); dateTd.textContent = p.date; tr.appendChild(dateTd);
-    const countTd = document.createElement('td'); countTd.textContent = p.trade_count; tr.appendChild(countTd);
-    const lossCountTd = document.createElement('td'); lossCountTd.textContent = p.loss_count || 0; 
-    lossCountTd.className = 'text-danger'; tr.appendChild(lossCountTd);
-    const profitCountTd = document.createElement('td'); profitCountTd.textContent = p.profit_count || 0;
-    profitCountTd.className = 'text-success'; tr.appendChild(profitCountTd);
-    const feesTd = document.createElement('td'); feesTd.textContent = fmt2(p.total_fees || 0);
-    feesTd.className = 'text-danger'; tr.appendChild(feesTd);
-    const profitTd = document.createElement('td'); profitTd.textContent = fmt2(p.profit);
-    profitTd.className = p.profit >= 0 ? 'text-success' : 'text-danger'; tr.appendChild(profitTd);
-    const rateTd = document.createElement('td'); rateTd.textContent = fmt2(p.profit_rate) + '%'; tr.appendChild(rateTd);
-    profitsBody.appendChild(tr);
-  });
+  // 交易记录
+  try {
+    const trades = await fetchJSON('/api/trades');
+    if (trades && Array.isArray(trades)) {
+      const ul = document.getElementById('trades'); 
+      ul.innerHTML='';
+      trades.forEach(t=>{ 
+        const li = document.createElement('li'); 
+        li.className='list-group-item';
+        if (t.text && t.text.includes('平仓')) { li.classList.add('trade-close'); }
+        li.innerHTML = t.text || ''; 
+        ul.appendChild(li); 
+      });
+    }
+  } catch (e) {
+    console.error('获取交易记录失败:', e);
+  }
+
+  // 系统日志
+  try {
+    const logs = await fetch('/api/logs');
+    if (logs.ok) {
+      let logText = await logs.text();
+      
+      // 为止损和止盈日志添加颜色标识
+      logText = logText.replace(/(.*止损.*)/g, '<span class="log-stop-loss">$1</span>');
+      logText = logText.replace(/(.*止盈.*)/g, '<span class="log-take-profit">$1</span>');
+      
+      document.getElementById('logs').innerHTML = logText;
+    }
+  } catch (e) {
+    console.error('获取日志失败:', e);
+  }
+
+  // 盈利统计
+  try {
+    const profits = await fetchJSON('/api/profits');
+    if (profits && Array.isArray(profits)) {
+      const profitsBody = document.getElementById('profits');
+      profitsBody.innerHTML = '';
+      profits.forEach(p => {
+        const tr = document.createElement('tr');
+        const dateTd = document.createElement('td'); dateTd.textContent = p.date || ''; tr.appendChild(dateTd);
+        const countTd = document.createElement('td'); countTd.textContent = p.trade_count || 0; tr.appendChild(countTd);
+        const lossCountTd = document.createElement('td'); lossCountTd.textContent = p.loss_count || 0; 
+        lossCountTd.className = 'text-danger'; tr.appendChild(lossCountTd);
+        const profitCountTd = document.createElement('td'); profitCountTd.textContent = p.profit_count || 0;
+        profitCountTd.className = 'text-success'; tr.appendChild(profitCountTd);
+        const feesTd = document.createElement('td'); feesTd.textContent = fmt2(p.total_fees || 0);
+        feesTd.className = 'text-danger'; tr.appendChild(feesTd);
+        const profitTd = document.createElement('td'); profitTd.textContent = fmt2(p.profit || 0);
+        profitTd.className = (p.profit || 0) >= 0 ? 'text-success' : 'text-danger'; tr.appendChild(profitTd);
+        const rateTd = document.createElement('td'); rateTd.textContent = fmt2(p.profit_rate || 0) + '%'; tr.appendChild(rateTd);
+        profitsBody.appendChild(tr);
+      });
+    }
+  } catch (e) {
+    console.error('获取盈利统计失败:', e);
+  }
   
   // 更新价格和BOLL数据
   await updatePriceAndBoll();
