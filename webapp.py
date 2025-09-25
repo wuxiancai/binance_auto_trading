@@ -422,8 +422,8 @@ TEMPLATE = """
             </div>
 
             <div class="config-item">
-              <span class="config-key">自动重启:</span>
-              <span class="config-value">{{ cfg.AUTO_RESTART }}</span>
+              <span class="config-key">手续费率:</span>
+              <span class="config-value">{{ (cfg.FEE_RATE * 100) | round(3) }}%</span>
             </div>
           </div>
         </div>
