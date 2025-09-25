@@ -197,6 +197,7 @@ class Trader:
                 log("INFO", f"Wallet balance: {wallet_balance}, Available balance: {available_balance}")
                 return wallet_balance
             
+            log("INFO", f"真实交易模式：获取到账户余额 {available_balance} USDT")
             return available_balance
         except Exception as e:
             log("ERROR", f"Failed to get balance: {str(e)}")
