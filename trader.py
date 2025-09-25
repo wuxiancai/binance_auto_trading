@@ -181,24 +181,23 @@ class Trader:
             log("ERROR", "Binance client not initialized")
             return 0.0
         try:
-            # 使用futures_account_balance()方法获取余额信息
-            balance_info = self.client.futures_account_balance()
-            if balance_info is None:
-                log("ERROR", "Failed to get balance: balance() returned None")
+            # 使用futures_account()方法获取账户信息，包含可用余额
+            account_info = self.client.futures_account()
+            if account_info is None:
+                log("ERROR", "Failed to get account info: futures_account() returned None")
                 return 0.0
             
-            # 查找USDT余额
-            usdt_balance = None
-            for item in balance_info:
-                if item.get('asset') == 'USDT':
-                    usdt_balance = float(item.get('balance', 0))
-                    break
+            # 获取可用余额（这是真正可用于新交易的金额）
+            available_balance = float(account_info.get('availableBalance', 0))
             
-            if usdt_balance is None:
-                log("ERROR", "Failed to get USDT balance from balance info")
-                return 0.0
+            if available_balance <= 0:
+                log("WARNING", f"Available balance is {available_balance}, checking wallet balance as fallback")
+                # 如果可用余额为0，尝试获取钱包余额作为备选
+                wallet_balance = float(account_info.get('totalWalletBalance', 0))
+                log("INFO", f"Wallet balance: {wallet_balance}, Available balance: {available_balance}")
+                return wallet_balance
             
-            return usdt_balance
+            return available_balance
         except Exception as e:
             log("ERROR", f"Failed to get balance: {str(e)}")
             return 0.0

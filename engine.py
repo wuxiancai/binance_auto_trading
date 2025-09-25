@@ -39,6 +39,8 @@ class Engine:
         self.socketio = None
         self.last_trade_time = 0  # 上次交易时间戳
         self.trade_cooldown = 60000  # 交易冷却时间60秒(毫秒)
+        self.last_close_time = 0  # 上次平仓时间戳
+        self.close_cooldown = 60000  # 平仓后冷却时间60秒(毫秒)
         self.last_action_price = 0  # 上次动作价格
         self.price_threshold = 0.001  # 价格变化阈值(0.1%)
 
@@ -251,6 +253,10 @@ class Engine:
             if current_time - self.last_trade_time < self.trade_cooldown:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
                 return
+            # 检查平仓后冷却时间
+            if current_time - self.last_close_time < self.close_cooldown:
+                log("INFO", f"平仓后冷却中，距离上次平仓{(current_time - self.last_close_time)/1000:.1f}秒，等待资金到账")
+                return
             balance = self.trader.get_balance()
             if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
                 log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
@@ -268,6 +274,10 @@ class Engine:
             current_time = int(time.time() * 1000)
             if current_time - self.last_trade_time < self.trade_cooldown:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
+                return
+            # 检查平仓后冷却时间
+            if current_time - self.last_close_time < self.close_cooldown:
+                log("INFO", f"平仓后冷却中，距离上次平仓{(current_time - self.last_close_time)/1000:.1f}秒，等待资金到账")
                 return
             balance = self.trader.get_balance()
             if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
@@ -330,6 +340,11 @@ class Engine:
         
         update_daily_profit(date, daily['trade_count'], net_profit, daily['profit_rate'], 
                           daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees)
+        
+        # 记录平仓时间，用于冷却机制
+        self.last_close_time = int(time.time() * 1000)
+        log("INFO", f"平仓成功，启动{self.close_cooldown/1000}秒冷却期，等待资金到账")
+        
         return True  # 平仓成功
 
 
