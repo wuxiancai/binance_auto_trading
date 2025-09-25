@@ -39,8 +39,6 @@ class Engine:
         self.socketio = None
         self.last_trade_time = 0  # 上次交易时间戳
         self.trade_cooldown = 60000  # 交易冷却时间60秒(毫秒)
-        self.last_close_time = 0  # 上次平仓时间戳
-        self.close_cooldown = 60000  # 平仓后冷却时间60秒(毫秒)
         self.last_action_price = 0  # 上次动作价格
         self.price_threshold = 0.001  # 价格变化阈值(0.1%)
 
@@ -184,111 +182,113 @@ class Engine:
         last_mid = float(mid.iloc[-1])
         last_up = float(up.iloc[-1])
         last_dn = float(dn.iloc[-1])
-        price = float(self.last_price) if self.last_price != 0 else float(df["close"].iloc[-1])
+        
+        # 使用K线收盘价而不是实时价格进行比较
+        close_price = float(df["close"].iloc[-1])
+        current_price = float(self.last_price) if self.last_price != 0 else close_price
+        
         if self.socketio:
-            self.socketio.emit('boll_update', {'boll_up': last_up, 'boll_mid': last_mid, 'boll_dn': last_dn})
+            self.socketio.emit('boll_update', {
+                'boll_up': last_up, 
+                'boll_mid': last_mid, 
+                'boll_dn': last_dn,
+                'close_price': close_price,
+                'current_price': current_price
+            })
 
-        # 先处理“持仓期间”的止盈/止损，避免在已有持仓时再次开仓
-        # 多仓：价格跌破DN -> 先平多，然后进入“跌破DN”状态等待反弹确认
-        if self.state == "long" and price < last_dn:
-            close_success = await self.close_and_update_profit(price)
+        # 先处理"持仓期间"的止盈/止损，避免在已有持仓时再次开仓
+        # 多仓：收盘价跌破DN -> 先平多，然后进入"跌破DN"状态等待反弹确认
+        if self.state == "long" and close_price < last_dn:
+            close_success = await self.close_and_update_profit(current_price)
             if close_success:
                 self.state = "breakdown_dn"
-                log("INFO", f"多仓止损，跌破DN({last_dn:.2f}) -> 等待反弹至DN")
+                log("INFO", f"多仓止损，收盘价跌破DN({last_dn:.2f}) -> 等待反弹至DN")
             else:
                 log("ERROR", f"多仓止损失败，保持long状态")
             return
 
-        # 多仓止盈：再次触及UP时先平仓，进入等待回落确认开空
-        if self.state == "long" and price >= last_up:
-            close_success = await self.close_and_update_profit(price)
+        # 多仓止盈：收盘价再次触及UP时先平仓，进入等待回落确认开空
+        if self.state == "long" and close_price >= last_up:
+            close_success = await self.close_and_update_profit(current_price)
             if close_success:
                 self.state = "breakout_up"  # 进入等待回落确认开空的状态
-                log("INFO", f"多仓止盈（触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
+                log("INFO", f"多仓止盈（收盘价触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
             else:
                 log("ERROR", f"多仓止盈失败，保持long状态")
             return
 
-        # 空仓：价格突破UP -> 先平空，然后进入"突破UP"状态等待回落确认确认
-        if self.state == "short" and price > last_up:
-            close_success = await self.close_and_update_profit(price)
+        # 空仓：收盘价突破UP -> 先平空，然后进入"突破UP"状态等待回落确认确认
+        if self.state == "short" and close_price > last_up:
+            close_success = await self.close_and_update_profit(current_price)
             if close_success:
                 self.state = "breakout_up"
-                log("INFO", f"空仓止损，突破UP({last_up:.2f}) -> 等待回落至UP")
+                log("INFO", f"空仓止损，收盘价突破UP({last_up:.2f}) -> 等待回落至UP")
             else:
                 log("ERROR", f"空仓止损失败，保持short状态")
             return
 
-        # 空仓止盈：再次触及DN时先平仓，进入等待反弹确认开多
-        if self.state == "short" and price <= last_dn:
-            close_success = await self.close_and_update_profit(price)
+        # 空仓止盈：收盘价再次触及DN时先平仓，进入等待反弹确认开多
+        if self.state == "short" and close_price <= last_dn:
+            close_success = await self.close_and_update_profit(current_price)
             if close_success:
                 self.state = "breakdown_dn"  # 进入等待反弹确认开多的状态
-                log("INFO", f"空仓止盈（触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
+                log("INFO", f"空仓止盈（收盘价触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
             else:
                 log("ERROR", f"空仓止盈失败，保持short状态")
             return
 
         # 状态机（允许在当前K线内完成"确认"）
-        if price > last_up and self.state != "breakout_up":
+        if close_price > last_up and self.state != "breakout_up":
             # 检查价格变化是否足够大
-            if self.last_action_price > 0 and abs(price - self.last_action_price) / self.last_action_price < self.price_threshold:
+            if self.last_action_price > 0 and abs(close_price - self.last_action_price) / self.last_action_price < self.price_threshold:
                 return
-            self.last_action_price = price
+            self.last_action_price = close_price
             self.state = "breakout_up"
-            log("INFO", f"突破UP，等待回落到UP：{last_up}")
+            log("INFO", f"收盘价突破UP，等待回落到UP：{last_up}")
             return
-        if price < last_dn and self.state != "breakdown_dn":
+        if close_price < last_dn and self.state != "breakdown_dn":
             # 检查价格变化是否足够大
-            if self.last_action_price > 0 and abs(price - self.last_action_price) / self.last_action_price < self.price_threshold:
+            if self.last_action_price > 0 and abs(close_price - self.last_action_price) / self.last_action_price < self.price_threshold:
                 return
-            self.last_action_price = price
+            self.last_action_price = close_price
             self.state = "breakdown_dn"
-            log("INFO", f"跌破DN，等待反弹到DN：{last_dn}")
+            log("INFO", f"收盘价跌破DN，等待反弹到DN：{last_dn}")
             return
 
         # 回落至UP -> 做空
-        if self.state == "breakout_up" and price <= last_up:
+        if self.state == "breakout_up" and close_price <= last_up:
             current_time = int(time.time() * 1000)
             if current_time - self.last_trade_time < self.trade_cooldown:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
                 return
-            # 检查平仓后冷却时间
-            if current_time - self.last_close_time < self.close_cooldown:
-                log("INFO", f"平仓后冷却中，距离上次平仓{(current_time - self.last_close_time)/1000:.1f}秒，等待资金到账")
-                return
             balance = self.trader.get_balance()
-            if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
+            if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
                 log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
                 return
             margin = balance * config.TRADE_PERCENT
-            qty = margin * config.LEVERAGE / price
-            await self.trader.place_order("SELL", qty, price)
+            qty = margin * config.LEVERAGE / current_price
+            await self.trader.place_order("SELL", qty, current_price)
             self.last_trade_time = current_time
             self.state = "short"
-            log("INFO", f"回落至UP开空 {qty} @ {price}")
+            log("INFO", f"收盘价回落至UP开空 {qty} @ {current_price}")
             return
 
         # 反弹至DN -> 做多
-        if self.state == "breakdown_dn" and price >= last_dn:
+        if self.state == "breakdown_dn" and close_price >= last_dn:
             current_time = int(time.time() * 1000)
             if current_time - self.last_trade_time < self.trade_cooldown:
                 log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
                 return
-            # 检查平仓后冷却时间
-            if current_time - self.last_close_time < self.close_cooldown:
-                log("INFO", f"平仓后冷却中，距离上次平仓{(current_time - self.last_close_time)/1000:.1f}秒，等待资金到账")
-                return
             balance = self.trader.get_balance()
-            if balance <= 0 or price <= 0 or config.LEVERAGE <= 0:
+            if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
                 log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
                 return
             margin = balance * config.TRADE_PERCENT
-            qty = margin * config.LEVERAGE / price
-            await self.trader.place_order("BUY", qty, price)
+            qty = margin * config.LEVERAGE / current_price
+            await self.trader.place_order("BUY", qty, current_price)
             self.last_trade_time = current_time
             self.state = "long"
-            log("INFO", f"反弹至DN开多 {qty} @ {price}")
+            log("INFO", f"收盘价反弹至DN开多 {qty} @ {current_price}")
             return
 
 
@@ -341,9 +341,7 @@ class Engine:
         update_daily_profit(date, daily['trade_count'], net_profit, daily['profit_rate'], 
                           daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees)
         
-        # 记录平仓时间，用于冷却机制
-        self.last_close_time = int(time.time() * 1000)
-        log("INFO", f"平仓成功，启动{self.close_cooldown/1000}秒冷却期，等待资金到账")
+        log("INFO", f"平仓成功，使用收盘价策略无需冷却期")
         
         return True  # 平仓成功
 

@@ -436,7 +436,7 @@ TEMPLATE = """
       </div>
       <div class="col-md-6">
         <div class="card">
-          <div class="card-header">实时币价和实时 BOLL</div>
+          <div class="card-header">实时币价和{{ cfg.INTERVAL }}收盘BOLL</div>
           <div class="card-body" id="price_boll">加载中...</div>
         </div>
       </div>
@@ -514,8 +514,13 @@ function updatePriceBoll() {
       priceClass = 'price-below-lower';
     }
     
+    // 获取当前时间
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+    
     pbDiv.innerHTML = `
       <div>实时币价: <span class="${priceClass}">${fmt2(current_price)}</span></div>
+      <div style="font-size: 10px; color: var(--mist-gray); margin-bottom: 4px;">BOLL计算时间: ${timeStr}</div>
       <div>BOLL 上轨: <span class="boll-upper">${fmt2(current_boll.boll_up)}</span></div>
       <div>BOLL 中轨: ${fmt2(current_boll.boll_mid)}</div>
       <div>BOLL 下轨: <span class="boll-lower">${fmt2(current_boll.boll_dn)}</span></div>
