@@ -967,7 +967,6 @@ def api_profits_summary():
     cur.execute("""
         SELECT DISTINCT DATE(datetime(ts/1000, 'unixepoch')) as trade_date
         FROM trades 
-        WHERE side = 'CLOSE_LONG'
         ORDER BY trade_date DESC
         LIMIT 2
     """)
@@ -976,10 +975,10 @@ def api_profits_summary():
     
     recent_profits = []
     for date_str in trade_dates:
-        # 从trades表计算该日期的数据
+        # 首先检查该日期是否有平仓交易
         cur.execute("""
             SELECT 
-                COUNT(*) as trade_count,
+                COUNT(*) as close_count,
                 SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as profit_count,
                 SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as loss_count,
                 COALESCE(SUM(fee), 0) as total_fees,
@@ -988,7 +987,31 @@ def api_profits_summary():
             WHERE side = 'CLOSE_LONG' AND DATE(datetime(ts/1000, 'unixepoch')) = ?
         """, (date_str,))
         
-        trade_row = cur.fetchone()
+        close_row = cur.fetchone()
+        
+        # 如果没有平仓交易，查询所有交易（主要是开仓交易）
+        if (close_row['close_count'] or 0) == 0:
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as trade_count,
+                    COALESCE(SUM(fee), 0) as total_fees
+                FROM trades 
+                WHERE DATE(datetime(ts/1000, 'unixepoch')) = ?
+            """, (date_str,))
+            
+            all_trade_row = cur.fetchone()
+            trade_count = all_trade_row['trade_count'] or 0
+            total_fees = all_trade_row['total_fees'] or 0.0
+            profit_count = 0
+            loss_count = 0
+            profit = 0.0
+        else:
+            # 有平仓交易，使用平仓交易的数据
+            trade_count = close_row['close_count'] or 0
+            profit_count = close_row['profit_count'] or 0
+            loss_count = close_row['loss_count'] or 0
+            total_fees = close_row['total_fees'] or 0.0
+            profit = close_row['profit'] or 0.0
         
         # 获取该日期的初始余额和利润率（从daily_profits表）
         cur.execute("""
@@ -1001,17 +1024,17 @@ def api_profits_summary():
         initial_balance = daily_row['initial_balance'] if daily_row else 40.0
         
         # 计算净利润（总盈亏 - 手续费）
-        net_profit = (trade_row['profit'] or 0.0) - (trade_row['total_fees'] or 0.0)
+        net_profit = profit - total_fees
         
         # 计算利润率（使用净利润）
         profit_rate = (net_profit / initial_balance * 100) if initial_balance > 0 else 0.0
         
         recent_profits.append({
             'date': date_str,
-            'trade_count': trade_row['trade_count'] or 0,
-            'profit_count': trade_row['profit_count'] or 0,
-            'loss_count': trade_row['loss_count'] or 0,
-            'total_fees': trade_row['total_fees'] or 0.0,
+            'trade_count': trade_count,
+            'profit_count': profit_count,
+            'loss_count': loss_count,
+            'total_fees': total_fees,
             'profit': net_profit,
             'profit_rate': profit_rate,
             'initial_balance': initial_balance
