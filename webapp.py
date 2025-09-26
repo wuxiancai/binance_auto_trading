@@ -212,6 +212,12 @@ TEMPLATE = """
       font-weight: 500;
     }
 
+    /* 手续费显示样式 */
+    .trade-fee {
+      color: #1890ff !important;  /* 蓝色 */
+      font-weight: 500;
+    }
+
     /* 持仓方向颜色 */
     .position-long {
       color: var(--bamboo-green) !important;
@@ -1149,20 +1155,27 @@ def api_trades():
             # 平仓显示平仓收益和盈亏
             if r.get('pnl') is not None:
                 pnl = float(r['pnl'])
+                fee = float(r.get('fee', 0))  # 获取手续费
+                net_pnl = pnl - fee  # 计算净盈亏（减去手续费）
+                
                 # 计算原始保证金（使用开仓价格，与trader.py一致）
                 original_margin = (qty * price) / config.LEVERAGE
-                close_amount = original_margin + pnl
+                close_amount = original_margin + net_pnl  # 使用净盈亏计算收益
                 
                 text = f"{ts_str} {action} 收益: {close_amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
                 
-                # 添加盈亏信息
-                if pnl > 0:
-                    pnl_text = f" <span class='trade-profit'>盈利: {pnl:.2f}</span>"
-                elif pnl < 0:
-                    pnl_text = f" <span class='trade-loss'>亏损: {abs(pnl):.2f}</span>"
+                # 添加净盈亏信息（已减去手续费）
+                if net_pnl > 0:
+                    pnl_text = f" <span class='trade-profit'>盈利: {net_pnl:.2f}</span>"
+                elif net_pnl < 0:
+                    pnl_text = f" <span class='trade-loss'>亏损: {abs(net_pnl):.2f}</span>"
                 else:
                     pnl_text = f" <span class='trade-neutral'>盈亏: 0.00</span>"
-                text += pnl_text
+                
+                # 添加手续费信息
+                fee_text = f" <span class='trade-fee'>手续费: {fee:.2f}</span>"
+                
+                text += pnl_text + fee_text
             else:
                 # 没有盈亏信息时，显示名义价值
                 amount = qty * price
