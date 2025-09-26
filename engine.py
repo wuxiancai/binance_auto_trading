@@ -473,7 +473,7 @@ class Engine:
         from db import get_conn
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("SELECT SUM(fee) FROM trades WHERE date(datetime(ts, 'unixepoch')) = ?", (date,))
+        cur.execute("SELECT SUM(fee) FROM trades WHERE date(datetime(ts/1000, 'unixepoch')) = ?", (date,))
         total_fees_result = cur.fetchone()
         total_fees = total_fees_result[0] if total_fees_result and total_fees_result[0] else 0.0
         conn.close()
