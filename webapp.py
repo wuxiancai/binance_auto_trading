@@ -552,7 +552,7 @@ function updatePriceBoll() {
       <div>BOLL 上轨: <span class="boll-upper">${fmt2(current_boll.boll_up)}</span></div>
       <div>BOLL 中轨: ${fmt2(current_boll.boll_mid)}</div>
       <div>BOLL 下轨: <span class="boll-lower">${fmt2(current_boll.boll_dn)}</span></div>
-      <div>BOLL同步时间: ${timeStr}</div>
+      <div>BOLL 同步时间: ${timeStr}</div>
     `;
   } else {
     pbDiv.innerText = '加载中...';
