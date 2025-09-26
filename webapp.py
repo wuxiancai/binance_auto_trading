@@ -908,26 +908,32 @@ def api_profits_summary():
     conn = get_conn()
     cur = conn.cursor()
     
-    # 直接从trades表计算累计汇总数据（只计算平仓交易）
+    # 直接从trades表计算累计汇总数据（计算所有平仓交易：CLOSE_LONG和CLOSE_SHORT）
     cur.execute("""
         SELECT 
             COUNT(*) as total_trade_count,
             SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as total_profit_count,
             SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as total_loss_count,
-            COALESCE(SUM(fee), 0) as total_fees,
             COALESCE(SUM(pnl), 0) as total_profit
         FROM trades 
-        WHERE side = 'CLOSE_LONG'
+        WHERE side IN ('CLOSE_LONG', 'CLOSE_SHORT')
     """)
     summary_row = cur.fetchone()
+    
+    # 计算所有交易的总手续费（包括开仓和平仓）
+    cur.execute("""
+        SELECT COALESCE(SUM(fee), 0) as all_fees
+        FROM trades
+    """)
+    all_fees_row = cur.fetchone()
     
     # 获取初始余额（从第一条记录或使用默认值）
     cur.execute("SELECT initial_balance FROM daily_profits WHERE initial_balance > 0 ORDER BY date ASC LIMIT 1")
     initial_balance_row = cur.fetchone()
     initial_balance = initial_balance_row['initial_balance'] if initial_balance_row else 40.0
     
-    # 计算总净利润（总盈亏 - 总手续费）
-    total_net_profit = (summary_row['total_profit'] or 0.0) - (summary_row['total_fees'] or 0.0)
+    # 计算总净利润（总盈亏 - 所有手续费），与每日数据计算逻辑保持一致
+    total_net_profit = (summary_row['total_profit'] or 0.0) - (all_fees_row['all_fees'] or 0.0)
     
     # 计算总利润率（使用净利润）
     total_profit_rate = (total_net_profit / initial_balance * 100) if initial_balance > 0 else 0.0
@@ -951,21 +957,20 @@ def api_profits_summary():
         summary_title = f'汇总({today})'
     
     # 构建汇总数据
-    summary_net_profit = (summary_row['total_profit'] or 0.0) - (summary_row['total_fees'] or 0.0)
     summary_data = {
         'date': summary_title,
         'trade_count': summary_row['total_trade_count'] or 0,
         'profit_count': summary_row['total_profit_count'] or 0,
         'loss_count': summary_row['total_loss_count'] or 0,
-        'total_fees': summary_row['total_fees'] or 0.0,
-        'profit': summary_net_profit,
+        'total_fees': all_fees_row['all_fees'] or 0.0,
+        'profit': total_net_profit,
         'profit_rate': total_profit_rate,
         'initial_balance': initial_balance
     }
     
     # 获取实际有交易记录的日期（最多显示最近2天）
     cur.execute("""
-        SELECT DISTINCT DATE(datetime(ts/1000, 'unixepoch')) as trade_date
+        SELECT DISTINCT DATE(datetime(ts/1000 + 8*3600, 'unixepoch')) as trade_date
         FROM trades 
         ORDER BY trade_date DESC
         LIMIT 2
@@ -975,43 +980,39 @@ def api_profits_summary():
     
     recent_profits = []
     for date_str in trade_dates:
-        # 首先检查该日期是否有平仓交易
+        # 统计该日期的平仓交易数据（交易次数只计算平仓：CLOSE_LONG和CLOSE_SHORT）
         cur.execute("""
             SELECT 
                 COUNT(*) as close_count,
                 SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as profit_count,
                 SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as loss_count,
-                COALESCE(SUM(fee), 0) as total_fees,
+                COALESCE(SUM(fee), 0) as close_fees,
                 COALESCE(SUM(pnl), 0) as profit
             FROM trades 
-            WHERE side = 'CLOSE_LONG' AND DATE(datetime(ts/1000, 'unixepoch')) = ?
+            WHERE side IN ('CLOSE_LONG', 'CLOSE_SHORT') AND DATE(datetime(ts/1000 + 8*3600, 'unixepoch')) = ?
         """, (date_str,))
         
         close_row = cur.fetchone()
         
-        # 如果没有平仓交易，查询所有交易（主要是开仓交易）
-        if (close_row['close_count'] or 0) == 0:
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as trade_count,
-                    COALESCE(SUM(fee), 0) as total_fees
-                FROM trades 
-                WHERE DATE(datetime(ts/1000, 'unixepoch')) = ?
-            """, (date_str,))
-            
-            all_trade_row = cur.fetchone()
-            trade_count = all_trade_row['trade_count'] or 0
-            total_fees = all_trade_row['total_fees'] or 0.0
-            profit_count = 0
-            loss_count = 0
-            profit = 0.0
-        else:
-            # 有平仓交易，使用平仓交易的数据
-            trade_count = close_row['close_count'] or 0
-            profit_count = close_row['profit_count'] or 0
-            loss_count = close_row['loss_count'] or 0
-            total_fees = close_row['total_fees'] or 0.0
-            profit = close_row['profit'] or 0.0
+        # 统计该日期的所有交易手续费（包括开仓和平仓）
+        cur.execute("""
+            SELECT COALESCE(SUM(fee), 0) as total_fees
+            FROM trades 
+            WHERE DATE(datetime(ts/1000 + 8*3600, 'unixepoch')) = ?
+        """, (date_str,))
+        
+        all_fees_row = cur.fetchone()
+        
+        # 交易次数、盈利次数、亏损次数只计算平仓交易
+        trade_count = close_row['close_count'] or 0
+        profit_count = close_row['profit_count'] or 0
+        loss_count = close_row['loss_count'] or 0
+        
+        # 手续费包括所有交易（开仓+平仓）
+        total_fees = all_fees_row['total_fees'] or 0.0
+        
+        # 盈亏只来自平仓交易
+        profit = close_row['profit'] or 0.0
         
         # 获取该日期的初始余额和利润率（从daily_profits表）
         cur.execute("""
@@ -1158,7 +1159,7 @@ def api_price_and_boll():
 def api_trades():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT ts, side, qty, price, pnl, simulate FROM trades ORDER BY ts DESC LIMIT 50")
+    cur.execute("SELECT ts, side, qty, price, pnl, simulate, fee FROM trades ORDER BY ts DESC LIMIT 50")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
 
@@ -1182,26 +1183,34 @@ def api_trades():
             # 开仓显示保证金金额（与trader.py中的计算方式一致）
             margin = (qty * price) / config.LEVERAGE
             text = f"{ts_str} {action} 保证金: {margin:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+            
+            # 显示开仓手续费（如果有的话）
+            if r.get('fee') is not None and r['fee'] > 0:
+                fee = float(r['fee'])
+                fee_text = f" <span class='trade-fee'>手续费: {fee:.2f}</span>"
+                text += fee_text
+                
         elif action == "平仓":
             # 平仓显示平仓收益和盈亏
             if r.get('pnl') is not None:
                 pnl = float(r['pnl'])
                 
-                # 计算手续费：收益 × 杠杆 × 手续费率
-                # 这里的收益是指原始保证金
-                original_margin = (qty * price) / config.LEVERAGE
-                fee = original_margin * config.LEVERAGE * config.FEE_RATE
+                # 使用数据库中存储的实际手续费
+                fee = float(r.get('fee', 0))
                 
-                net_pnl = pnl - fee  # 计算净盈亏（减去手续费）
-                close_amount = original_margin + net_pnl  # 使用净盈亏计算收益
+                # 计算保证金
+                original_margin = (qty * price) / config.LEVERAGE
+                
+                # 平仓收益 = 保证金 + 盈亏 - 手续费
+                close_amount = original_margin + pnl - fee
                 
                 text = f"{ts_str} {action} 收益: {close_amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
                 
-                # 添加净盈亏信息（已减去手续费）
-                if net_pnl > 0:
-                    pnl_text = f" <span class='trade-profit'>盈利: {net_pnl:.2f}</span>"
-                elif net_pnl < 0:
-                    pnl_text = f" <span class='trade-loss'>亏损: {abs(net_pnl):.2f}</span>"
+                # 添加盈亏信息（原始盈亏，未减去手续费）
+                if pnl > 0:
+                    pnl_text = f" <span class='trade-profit'>盈利: {pnl:.2f}</span>"
+                elif pnl < 0:
+                    pnl_text = f" <span class='trade-loss'>亏损: {abs(pnl):.2f}</span>"
                 else:
                     pnl_text = f" <span class='trade-neutral'>盈亏: 0.00</span>"
                 
@@ -1213,10 +1222,22 @@ def api_trades():
                 # 没有盈亏信息时，显示名义价值
                 amount = qty * price
                 text = f"{ts_str} {action} 名义价值: {amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+                
+                # 显示手续费（如果有的话）
+                if r.get('fee') is not None and r['fee'] > 0:
+                    fee = float(r['fee'])
+                    fee_text = f" <span class='trade-fee'>手续费: {fee:.2f}</span>"
+                    text += fee_text
         else:
             # 其他操作显示名义价值
             amount = qty * price
             text = f"{ts_str} {action} 金额: {amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+            
+            # 显示手续费（如果有的话）
+            if r.get('fee') is not None and r['fee'] > 0:
+                fee = float(r['fee'])
+                fee_text = f" <span class='trade-fee'>手续费: {fee:.2f}</span>"
+                text += fee_text
         
         return {"text": text}
 
