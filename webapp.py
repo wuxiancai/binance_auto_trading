@@ -1155,11 +1155,13 @@ def api_trades():
             # 平仓显示平仓收益和盈亏
             if r.get('pnl') is not None:
                 pnl = float(r['pnl'])
-                fee = float(r.get('fee', 0))  # 获取手续费
-                net_pnl = pnl - fee  # 计算净盈亏（减去手续费）
                 
-                # 计算原始保证金（使用开仓价格，与trader.py一致）
+                # 计算手续费：收益 × 杠杆 × 手续费率
+                # 这里的收益是指原始保证金
                 original_margin = (qty * price) / config.LEVERAGE
+                fee = original_margin * config.LEVERAGE * config.FEE_RATE
+                
+                net_pnl = pnl - fee  # 计算净盈亏（减去手续费）
                 close_amount = original_margin + net_pnl  # 使用净盈亏计算收益
                 
                 text = f"{ts_str} {action} 收益: {close_amount:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
