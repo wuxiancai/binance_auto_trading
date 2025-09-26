@@ -256,16 +256,24 @@ class Engine:
             
         # 突破UP等待跌破：收盘价跌破UP -> 开空仓
         if self.state == self.STATE_BREAKOUT_UP_WAIT_FALL and close_price <= up:
+            # 新增条件：如果收盘价小于中轨，则不开仓，继续等待
+            if close_price < mid:
+                log("INFO", f"收盘价跌破UP({up:.2f})但小于中轨({mid:.2f}) -> 不开仓，继续等待")
+                return
             if await self._place_short_order(current_price):
                 self.state = self.STATE_HOLDING_SHORT
-                log("INFO", f"收盘价跌破UP({up:.2f}) -> 开空仓，标记状态：持仓SHORT")
+                log("INFO", f"收盘价跌破UP({up:.2f})且大于等于中轨({mid:.2f}) -> 开空仓，标记状态：持仓SHORT")
             return
             
         # 已止损SHORT等待跌破：收盘价跌破UP -> 再次开空
         if self.state == self.STATE_SHORT_STOP_LOSS_WAIT_FALL and close_price <= up:
+            # 新增条件：如果收盘价小于中轨，则不开仓，继续等待
+            if close_price < mid:
+                log("INFO", f"收盘价跌破UP({up:.2f})但小于中轨({mid:.2f}) -> 不开仓，继续等待")
+                return
             if await self._place_short_order(current_price):
                 self.state = self.STATE_HOLDING_SHORT
-                log("INFO", f"收盘价跌破UP({up:.2f}) -> 再次开空，标记状态：持仓SHORT")
+                log("INFO", f"收盘价跌破UP({up:.2f})且大于等于中轨({mid:.2f}) -> 再次开空，标记状态：持仓SHORT")
             return
             
         # 持仓SHORT的处理
@@ -304,9 +312,14 @@ class Engine:
             if close_price > dn:
                 if await self.close_and_update_profit(current_price):
                     log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 止盈SHORT")
-                    if await self._place_long_order(current_price):
-                        self.state = self.STATE_HOLDING_LONG
-                        log("INFO", f"开多仓，标记状态：持仓LONG")
+                    # 新增条件：如果收盘价大于中轨，则不开多仓，转为等待开仓状态
+                    if close_price > mid:
+                        self.state = self.STATE_WAITING
+                        log("INFO", f"收盘价反弹至DN({dn:.2f})但大于中轨({mid:.2f}) -> 不开多仓，转为等待开仓状态")
+                    else:
+                        if await self._place_long_order(current_price):
+                            self.state = self.STATE_HOLDING_LONG
+                            log("INFO", f"收盘价反弹至DN({dn:.2f})且小于等于中轨({mid:.2f}) -> 开多仓，标记状态：持仓LONG")
                 return
                 
         # ==================== 开多逻辑 ====================
@@ -319,16 +332,24 @@ class Engine:
             
         # 跌破DN等待反弹：收盘价反弹至DN -> 开多仓
         if self.state == self.STATE_BREAKDOWN_DN_WAIT_BOUNCE and close_price > dn:
+            # 新增条件：如果收盘价大于中轨，则不开仓，继续等待
+            if close_price > mid:
+                log("INFO", f"收盘价反弹至DN({dn:.2f})但大于中轨({mid:.2f}) -> 不开仓，继续等待")
+                return
             if await self._place_long_order(current_price):
                 self.state = self.STATE_HOLDING_LONG
-                log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 开多仓，标记状态：持仓LONG")
+                log("INFO", f"收盘价反弹至DN({dn:.2f})且小于等于中轨({mid:.2f}) -> 开多仓，标记状态：持仓LONG")
             return
             
         # 已止损LONG等待反弹：收盘价反弹至DN -> 再次开多
         if self.state == self.STATE_LONG_STOP_LOSS_WAIT_BOUNCE and close_price > dn:
+            # 新增条件：如果收盘价大于中轨，则不开仓，继续等待
+            if close_price > mid:
+                log("INFO", f"收盘价反弹至DN({dn:.2f})但大于中轨({mid:.2f}) -> 不开仓，继续等待")
+                return
             if await self._place_long_order(current_price):
                 self.state = self.STATE_HOLDING_LONG
-                log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 再次开多，标记状态：持仓LONG")
+                log("INFO", f"收盘价反弹至DN({dn:.2f})且小于等于中轨({mid:.2f}) -> 再次开多，标记状态：持仓LONG")
             return
             
         # 持仓LONG的处理
@@ -352,9 +373,14 @@ class Engine:
             if close_price > up:
                 if await self.close_and_update_profit(current_price):
                     log("INFO", f"收盘价突破UP({up:.2f}) -> 止盈LONG")
-                    if await self._place_short_order(current_price):
-                        self.state = self.STATE_HOLDING_SHORT
-                        log("INFO", f"开空仓，标记状态：持仓SHORT")
+                    # 新增条件：如果收盘价小于中轨，则不开空仓，转为等待开仓状态
+                    if close_price < mid:
+                        self.state = self.STATE_WAITING
+                        log("INFO", f"收盘价突破UP({up:.2f})但小于中轨({mid:.2f}) -> 不开空仓，转为等待开仓状态")
+                    else:
+                        if await self._place_short_order(current_price):
+                            self.state = self.STATE_HOLDING_SHORT
+                            log("INFO", f"收盘价突破UP({up:.2f})且大于等于中轨({mid:.2f}) -> 开空仓，标记状态：持仓SHORT")
                 return
                 
             # 收盘价跌破中轨 -> 止盈LONG
