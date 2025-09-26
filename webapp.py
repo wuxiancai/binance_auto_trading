@@ -501,6 +501,7 @@ async function fetchJSON(url, retries = 3) {
 function fmt2(v){ return Number(v).toFixed(2); }
 
 let current_price = 0;
+let current_price_open = 0;
 let current_boll = {boll_up: 0, boll_mid: 0, boll_dn: 0};
 
 function updatePriceBoll() {
@@ -514,13 +515,34 @@ function updatePriceBoll() {
       priceClass = 'price-below-lower';
     }
     
+    // 计算当天涨跌幅
+    let changePercent = 0;
+    let changeClass = '';
+    let changeText = '';
+    if (current_price_open && current_price_open > 0) {
+      changePercent = ((current_price - current_price_open) / current_price_open) * 100;
+      if (changePercent > 0) {
+        changeClass = 'text-success';
+        changeText = `+${changePercent.toFixed(4)}%`;
+      } else if (changePercent < 0) {
+        changeClass = 'text-danger';
+        changeText = `${changePercent.toFixed(4)}%`;
+      } else {
+        changeClass = 'text-muted';
+        changeText = '0.0000%';
+      }
+    } else {
+      changeText = '无数据';
+      changeClass = 'text-muted';
+    }
+    
     // 获取当前时间
     const now = new Date();
     const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
     
     pbDiv.innerHTML = `
       <div>实时币价: <span class="${priceClass}">${fmt2(current_price)}</span></div>
-      
+      <div>当天开盘价: <span class="price-open">${fmt2(current_price_open)}</span> 当天涨跌幅: <span class="${changeClass}">${changeText}</span></div>
       <div>BOLL 上轨: <span class="boll-upper">${fmt2(current_boll.boll_up)}</span></div>
       <div>BOLL 中轨: ${fmt2(current_boll.boll_mid)}</div>
       <div>BOLL 下轨: <span class="boll-lower">${fmt2(current_boll.boll_dn)}</span></div>
@@ -537,6 +559,7 @@ async function updatePriceAndBoll() {
     const data = await fetchJSON('/api/price_and_boll');
     if (data && data.price && data.price > 0) {
       current_price = data.price;
+      current_price_open = data.price_open || 0;
       current_boll = {
         boll_up: data.boll_up || 0,
         boll_mid: data.boll_mid || 0,
@@ -675,25 +698,57 @@ async function refresh(){
     console.error('获取日志失败:', e);
   }
 
-  // 盈利统计
+  // 盈利统计 - 使用新的汇总API
   try {
-    const profits = await fetchJSON('/api/profits');
+    const profits = await fetchJSON('/api/profits_summary');
     if (profits && Array.isArray(profits)) {
       const profitsBody = document.getElementById('profits');
       profitsBody.innerHTML = '';
-      profits.forEach(p => {
+      
+      // 只显示前3行数据（汇总、当天、昨天）
+      const displayData = profits.slice(0, 3);
+      
+      displayData.forEach((p, index) => {
         const tr = document.createElement('tr');
-        const dateTd = document.createElement('td'); dateTd.textContent = p.date || ''; tr.appendChild(dateTd);
-        const countTd = document.createElement('td'); countTd.textContent = p.trade_count || 0; tr.appendChild(countTd);
-        const lossCountTd = document.createElement('td'); lossCountTd.textContent = p.loss_count || 0; 
-        lossCountTd.className = 'text-danger'; tr.appendChild(lossCountTd);
-        const profitCountTd = document.createElement('td'); profitCountTd.textContent = p.profit_count || 0;
-        profitCountTd.className = 'text-success'; tr.appendChild(profitCountTd);
-        const feesTd = document.createElement('td'); feesTd.textContent = fmt2(p.total_fees || 0);
-        feesTd.className = 'text-danger'; tr.appendChild(feesTd);
-        const profitTd = document.createElement('td'); profitTd.textContent = fmt2(p.profit || 0);
-        profitTd.className = (p.profit || 0) >= 0 ? 'text-success' : 'text-danger'; tr.appendChild(profitTd);
-        const rateTd = document.createElement('td'); rateTd.textContent = fmt2(p.profit_rate || 0) + '%'; tr.appendChild(rateTd);
+        
+        // 汇总行使用特殊样式
+        if (index === 0) {
+          tr.style.backgroundColor = 'var(--cloud-white)';
+          tr.style.fontWeight = '600';
+        }
+        
+        const dateTd = document.createElement('td'); 
+        dateTd.textContent = p.date || ''; 
+        tr.appendChild(dateTd);
+        
+        const countTd = document.createElement('td'); 
+        countTd.textContent = p.trade_count || 0; 
+        tr.appendChild(countTd);
+        
+        const lossCountTd = document.createElement('td'); 
+        lossCountTd.textContent = p.loss_count || 0; 
+        lossCountTd.className = 'text-danger'; 
+        tr.appendChild(lossCountTd);
+        
+        const profitCountTd = document.createElement('td'); 
+        profitCountTd.textContent = p.profit_count || 0;
+        profitCountTd.className = 'text-success'; 
+        tr.appendChild(profitCountTd);
+        
+        const feesTd = document.createElement('td'); 
+        feesTd.textContent = fmt2(p.total_fees || 0);
+        feesTd.className = 'text-danger'; 
+        tr.appendChild(feesTd);
+        
+        const profitTd = document.createElement('td'); 
+        profitTd.textContent = fmt2(p.profit || 0);
+        profitTd.className = (p.profit || 0) >= 0 ? 'text-success' : 'text-danger'; 
+        tr.appendChild(profitTd);
+        
+        const rateTd = document.createElement('td'); 
+        rateTd.textContent = fmt2(p.profit_rate || 0) + '%'; 
+        tr.appendChild(rateTd);
+        
         profitsBody.appendChild(tr);
       });
     }
@@ -839,6 +894,114 @@ def api_profits():
     profits = get_daily_profits()
     return jsonify(profits)
 
+@app.route('/api/profits_summary')
+def api_profits_summary():
+    """获取累计汇总数据和最近3天的盈利数据"""
+    from datetime import datetime, timedelta
+    
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # 直接从trades表计算累计汇总数据（只计算平仓交易）
+    cur.execute("""
+        SELECT 
+            COUNT(*) as total_trade_count,
+            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as total_profit_count,
+            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as total_loss_count,
+            COALESCE(SUM(fee), 0) as total_fees,
+            COALESCE(SUM(pnl), 0) as total_profit
+        FROM trades 
+        WHERE side = 'CLOSE_LONG'
+    """)
+    summary_row = cur.fetchone()
+    
+    # 获取初始余额（从第一条记录或使用默认值）
+    cur.execute("SELECT initial_balance FROM daily_profits WHERE initial_balance > 0 ORDER BY date ASC LIMIT 1")
+    initial_balance_row = cur.fetchone()
+    initial_balance = initial_balance_row['initial_balance'] if initial_balance_row else 40.0
+    
+    # 计算总利润率
+    total_profit_rate = (summary_row['total_profit'] / initial_balance * 100) if initial_balance > 0 else 0.0
+    
+    # 获取当天日期
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    # 计算交易天数：从第一次交易到当前日期的天数
+    cur.execute("SELECT MIN(ts) as first_trade_ts FROM trades")
+    first_trade_row = cur.fetchone()
+    
+    if first_trade_row and first_trade_row['first_trade_ts']:
+        # 将时间戳转换为日期
+        first_trade_date = datetime.fromtimestamp(first_trade_row['first_trade_ts'] / 1000).date()
+        current_date = datetime.now().date()
+        # 计算天数差
+        trading_days = (current_date - first_trade_date).days + 1  # +1 包含第一天
+        summary_title = f'{trading_days} 天交易汇总'
+    else:
+        # 如果没有交易记录，显示默认格式
+        summary_title = f'汇总({today})'
+    
+    # 构建汇总数据
+    summary_data = {
+        'date': summary_title,
+        'trade_count': summary_row['total_trade_count'] or 0,
+        'profit_count': summary_row['total_profit_count'] or 0,
+        'loss_count': summary_row['total_loss_count'] or 0,
+        'total_fees': summary_row['total_fees'] or 0.0,
+        'profit': summary_row['total_profit'] or 0.0,
+        'profit_rate': total_profit_rate,
+        'initial_balance': initial_balance
+    }
+    
+    # 获取最近2天的数据（当天和昨天），直接从trades表计算
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    recent_profits = []
+    for date_str in [today, yesterday]:
+        # 从trades表计算该日期的数据
+        cur.execute("""
+            SELECT 
+                COUNT(*) as trade_count,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as profit_count,
+                SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as loss_count,
+                COALESCE(SUM(fee), 0) as total_fees,
+                COALESCE(SUM(pnl), 0) as profit
+            FROM trades 
+            WHERE side = 'CLOSE_LONG' AND DATE(datetime(ts/1000, 'unixepoch')) = ?
+        """, (date_str,))
+        
+        trade_row = cur.fetchone()
+        
+        # 获取该日期的初始余额和利润率（从daily_profits表）
+        cur.execute("""
+            SELECT initial_balance, profit_rate 
+            FROM daily_profits 
+            WHERE date = ?
+        """, (date_str,))
+        
+        daily_row = cur.fetchone()
+        initial_balance = daily_row['initial_balance'] if daily_row else 40.0
+        
+        # 计算利润率
+        profit_rate = (trade_row['profit'] / initial_balance * 100) if initial_balance > 0 else 0.0
+        
+        recent_profits.append({
+            'date': date_str,
+            'trade_count': trade_row['trade_count'] or 0,
+            'profit_count': trade_row['profit_count'] or 0,
+            'loss_count': trade_row['loss_count'] or 0,
+            'total_fees': trade_row['total_fees'] or 0.0,
+            'profit': trade_row['profit'] or 0.0,
+            'profit_rate': profit_rate,
+            'initial_balance': initial_balance
+        })
+    
+    conn.close()
+    
+    # 返回汇总数据和最近数据
+    result = [summary_data] + recent_profits
+    return jsonify(result)
+
 @app.route('/api/engine_status')
 def api_engine_status():
     """获取 Engine 实例的实时状态"""
@@ -866,6 +1029,30 @@ def api_engine_status():
 @app.route('/api/price_and_boll')
 def api_price_and_boll():
     try:
+        # 获取当天开盘价（当天00:00的开盘价）
+        today_open_price = 0
+        try:
+            from datetime import datetime, timezone, timedelta
+            # 获取当天00:00的时间戳（UTC+8）
+            now = datetime.now(timezone(timedelta(hours=8)))
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start_ts = int(today_start.timestamp() * 1000)
+            
+            # 查询当天00:00附近的K线数据
+            conn = get_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT open FROM klines 
+                WHERE symbol = ? AND open_time >= ? 
+                ORDER BY open_time ASC LIMIT 1
+            """, (config.SYMBOL, today_start_ts))
+            result = cursor.fetchone()
+            if result:
+                today_open_price = float(result[0])
+            conn.close()
+        except Exception as e:
+            print(f"获取当天开盘价失败: {e}")
+        
         # 优先使用 Engine 实例的实时数据
         if hasattr(app, 'engine_instance') and app.engine_instance:
             eng = app.engine_instance
@@ -890,6 +1077,7 @@ def api_price_and_boll():
                 
                 return jsonify({
                     'price': current_price,
+                    'price_open': today_open_price,
                     'boll_up': float(up.iloc[-1]),
                     'boll_mid': float(mid.iloc[-1]),
                     'boll_dn': float(dn.iloc[-1])
@@ -900,6 +1088,7 @@ def api_price_and_boll():
         if len(rows) < config.BOLL_PERIOD:
             return jsonify({
                 'price': 0,
+                'price_open': today_open_price,
                 'boll_up': 0,
                 'boll_mid': 0,
                 'boll_dn': 0
@@ -912,6 +1101,7 @@ def api_price_and_boll():
         
         return jsonify({
             'price': price,
+            'price_open': today_open_price,
             'boll_up': float(up.iloc[-1]),
             'boll_mid': float(mid.iloc[-1]),
             'boll_dn': float(dn.iloc[-1])

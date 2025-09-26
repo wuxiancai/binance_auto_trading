@@ -98,6 +98,9 @@ def init_db():
             
         if 'total_fees' not in daily_columns:
             cur.execute("ALTER TABLE daily_profits ADD COLUMN total_fees REAL DEFAULT 0.0")
+            
+        if 'initial_balance' not in daily_columns:
+            cur.execute("ALTER TABLE daily_profits ADD COLUMN initial_balance REAL DEFAULT 0.0")
         
         # 检查trades表字段
         cur.execute("PRAGMA table_info(trades)")
@@ -237,7 +240,7 @@ def get_daily_profits(limit: int = 30) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate: float, loss_count: int = 0, profit_count: int = 0, total_fees: float = 0.0):
+def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate: float, loss_count: int = 0, profit_count: int = 0, total_fees: float = 0.0, initial_balance: float = 0.0):
     """更新或创建指定日期的盈利记录"""
     conn = get_conn()
     cur = conn.cursor()
@@ -246,13 +249,13 @@ def update_daily_profit(date: str, trade_count: int, profit: float, profit_rate:
     
     if row:
         cur.execute(
-            "UPDATE daily_profits SET trade_count=?, profit=?, profit_rate=?, loss_count=?, profit_count=?, total_fees=? WHERE date=?",
-            (trade_count, profit, profit_rate, loss_count, profit_count, total_fees, date)
+            "UPDATE daily_profits SET trade_count=?, profit=?, profit_rate=?, loss_count=?, profit_count=?, total_fees=?, initial_balance=? WHERE date=?",
+            (trade_count, profit, profit_rate, loss_count, profit_count, total_fees, initial_balance, date)
         )
     else:
         cur.execute(
-            "INSERT INTO daily_profits(date, trade_count, profit, profit_rate, loss_count, profit_count, total_fees) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (date, trade_count, profit, profit_rate, loss_count, profit_count, total_fees)
+            "INSERT INTO daily_profits(date, trade_count, profit, profit_rate, loss_count, profit_count, total_fees, initial_balance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (date, trade_count, profit, profit_rate, loss_count, profit_count, total_fees, initial_balance)
         )
     
     conn.commit()

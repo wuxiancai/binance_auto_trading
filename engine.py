@@ -76,6 +76,16 @@ class Engine:
         elif pos and pos.get("side") == "short":
             self.state = self.STATE_HOLDING_SHORT
             log("INFO", f"恢复状态为 {self.state}（检测到空仓持仓）")
+    
+    def get_daily_initial_balance(self, date: str) -> float:
+        """获取指定日期的初始余额，如果不存在则记录当前余额作为初始余额"""
+        daily = get_daily_profit(date)
+        if daily and daily.get('initial_balance', 0) > 0:
+            return daily['initial_balance']
+        else:
+            # 如果没有记录初始余额，使用当前余额作为初始余额
+            current_balance = self.trader.get_balance()
+            return current_balance
 
     async def bootstrap(self):
         try:
@@ -481,20 +491,28 @@ class Engine:
         # 计算净利润（扣除手续费后的利润）
         net_profit = daily['profit'] - total_fees
         
-        # 统计盈利和亏损次数（基于净利润）
-        if net_profit > 0:
+        # 统计盈利和亏损次数（基于单笔交易盈亏）
+        if this_profit > 0:
             daily['profit_count'] = daily.get('profit_count', 0) + 1
-        elif net_profit < 0:
+        elif this_profit < 0:
             daily['loss_count'] = daily.get('loss_count', 0) + 1
         
+        # 获取当日初始余额
+        daily_initial_balance = self.get_daily_initial_balance(date)
+        
+        # 如果是当日第一笔交易，记录初始余额
+        if daily['trade_count'] == 1:
+            daily_initial_balance = self.trader.get_balance() - this_profit
+        
+        # 计算利润率：(当前余额 - 当日初始余额) / 当日初始余额
         current_balance = self.trader.get_balance()
-        if self.initial_capital > 0:
-            daily['profit_rate'] = ((current_balance - self.initial_balance) / self.initial_capital) * 100
+        if daily_initial_balance > 0:
+            daily['profit_rate'] = ((current_balance - daily_initial_balance) / daily_initial_balance) * 100
         else:
             daily['profit_rate'] = 0.0
         
         update_daily_profit(date, daily['trade_count'], net_profit, daily['profit_rate'], 
-                          daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees)
+                          daily.get('loss_count', 0), daily.get('profit_count', 0), total_fees, daily_initial_balance)
         
         log("INFO", f"平仓成功，使用收盘价策略无需冷却期")
         
