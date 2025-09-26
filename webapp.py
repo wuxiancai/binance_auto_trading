@@ -920,8 +920,11 @@ def api_profits_summary():
     initial_balance_row = cur.fetchone()
     initial_balance = initial_balance_row['initial_balance'] if initial_balance_row else 40.0
     
-    # 计算总利润率
-    total_profit_rate = (summary_row['total_profit'] / initial_balance * 100) if initial_balance > 0 else 0.0
+    # 计算总净利润（总盈亏 - 总手续费）
+    total_net_profit = (summary_row['total_profit'] or 0.0) - (summary_row['total_fees'] or 0.0)
+    
+    # 计算总利润率（使用净利润）
+    total_profit_rate = (total_net_profit / initial_balance * 100) if initial_balance > 0 else 0.0
     
     # 获取当天日期
     today = datetime.now().strftime('%Y-%m-%d')
@@ -942,13 +945,14 @@ def api_profits_summary():
         summary_title = f'汇总({today})'
     
     # 构建汇总数据
+    summary_net_profit = (summary_row['total_profit'] or 0.0) - (summary_row['total_fees'] or 0.0)
     summary_data = {
         'date': summary_title,
         'trade_count': summary_row['total_trade_count'] or 0,
         'profit_count': summary_row['total_profit_count'] or 0,
         'loss_count': summary_row['total_loss_count'] or 0,
         'total_fees': summary_row['total_fees'] or 0.0,
-        'profit': summary_row['total_profit'] or 0.0,
+        'profit': summary_net_profit,
         'profit_rate': total_profit_rate,
         'initial_balance': initial_balance
     }
@@ -982,8 +986,11 @@ def api_profits_summary():
         daily_row = cur.fetchone()
         initial_balance = daily_row['initial_balance'] if daily_row else 40.0
         
-        # 计算利润率
-        profit_rate = (trade_row['profit'] / initial_balance * 100) if initial_balance > 0 else 0.0
+        # 计算净利润（总盈亏 - 手续费）
+        net_profit = (trade_row['profit'] or 0.0) - (trade_row['total_fees'] or 0.0)
+        
+        # 计算利润率（使用净利润）
+        profit_rate = (net_profit / initial_balance * 100) if initial_balance > 0 else 0.0
         
         recent_profits.append({
             'date': date_str,
@@ -991,7 +998,7 @@ def api_profits_summary():
             'profit_count': trade_row['profit_count'] or 0,
             'loss_count': trade_row['loss_count'] or 0,
             'total_fees': trade_row['total_fees'] or 0.0,
-            'profit': trade_row['profit'] or 0.0,
+            'profit': net_profit,
             'profit_rate': profit_rate,
             'initial_balance': initial_balance
         })
