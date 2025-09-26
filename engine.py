@@ -31,7 +31,29 @@ class Engine:
         self.initial_balance = self.trader.get_balance()
         pos = get_position(config.SYMBOL)
         self.initial_capital = self.initial_balance
-        self.state = "idle"  # idle / breakout_up / breakdown_dn / long / short
+        
+        # 新的状态机枚举
+        # 等待开仓状态
+        self.STATE_WAITING = "waiting"  # 等待开仓
+        
+        # 开空相关状态
+        self.STATE_BREAKOUT_UP_WAIT_FALL = "breakout_up_wait_fall"  # 突破UP，等待跌破UP
+        self.STATE_HOLDING_SHORT = "holding_short"  # 持仓SHORT
+        self.STATE_SHORT_STOP_LOSS_WAIT_FALL = "short_stop_loss_wait_fall"  # 已止损SHORT，等待跌破UP
+        self.STATE_SHORT_BELOW_MID_WAIT = "short_below_mid_wait"  # 跌破中轨，等待突破中轨或跌破DN
+        self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE = "short_below_dn_wait_bounce"  # 跌破DN，等待反弹DN
+        self.STATE_SHORT_PROFIT_TAKEN = "short_profit_taken"  # 已止盈SHORT，等待开仓
+        
+        # 开多相关状态  
+        self.STATE_BREAKDOWN_DN_WAIT_BOUNCE = "breakdown_dn_wait_bounce"  # 跌破DN，等待反弹到DN
+        self.STATE_HOLDING_LONG = "holding_long"  # 持仓LONG
+        self.STATE_LONG_STOP_LOSS_WAIT_BOUNCE = "long_stop_loss_wait_bounce"  # 已止损LONG，等待收盘价>DN
+        self.STATE_LONG_ABOVE_MID_WAIT = "long_above_mid_wait"  # 突破中轨，等待突破UP或跌破中轨
+        self.STATE_LONG_PROFIT_TAKEN = "long_profit_taken"  # 已止盈LONG，等待开仓
+        
+        # 初始化状态
+        self.state = self.STATE_WAITING
+        
         self.prices: Deque[float] = deque(maxlen=1000)
         self.last_price: float = 0.0
         # 评估频率节流（用于未收盘K线内的即时评估）
@@ -42,9 +64,13 @@ class Engine:
         self.last_action_price = 0  # 上次动作价格
         self.price_threshold = 0.001  # 价格变化阈值(0.1%)
 
-        if pos and (pos.get("side") in ("long", "short")):
-            self.state = pos["side"]
-            log("INFO", f"恢复状态为 {self.state}（检测到已有持仓）")
+        # 根据现有持仓恢复状态
+        if pos and pos.get("side") == "long":
+            self.state = self.STATE_HOLDING_LONG
+            log("INFO", f"恢复状态为 {self.state}（检测到多仓持仓）")
+        elif pos and pos.get("side") == "short":
+            self.state = self.STATE_HOLDING_SHORT
+            log("INFO", f"恢复状态为 {self.state}（检测到空仓持仓）")
 
     async def bootstrap(self):
         try:
@@ -193,103 +219,191 @@ class Engine:
                 'boll_mid': last_mid, 
                 'boll_dn': last_dn,
                 'close_price': close_price,
-                'current_price': current_price
+                'current_price': current_price,
+                'state': self.state
             })
 
-        # 先处理"持仓期间"的止盈/止损，避免在已有持仓时再次开仓
-        # 多仓：收盘价跌破DN -> 先平多，然后进入"跌破DN"状态等待反弹确认
-        if self.state == "long" and close_price < last_dn:
-            close_success = await self.close_and_update_profit(current_price)
-            if close_success:
-                self.state = "breakdown_dn"
-                log("INFO", f"多仓止损，收盘价跌破DN({last_dn:.2f}) -> 等待反弹至DN")
-            else:
-                log("ERROR", f"多仓止损失败，保持long状态")
-            return
+        log("DEBUG", f"当前状态: {self.state}, 收盘价: {close_price:.2f}, UP: {last_up:.2f}, MID: {last_mid:.2f}, DN: {last_dn:.2f}")
 
-        # 多仓止盈：收盘价再次触及UP时先平仓，进入等待回落确认开空
-        if self.state == "long" and close_price >= last_up:
-            close_success = await self.close_and_update_profit(current_price)
-            if close_success:
-                self.state = "breakout_up"  # 进入等待回落确认开空的状态
-                log("INFO", f"多仓止盈（收盘价触及UP {last_up:.2f}），已平仓，等待回落至UP再考虑开空")
-            else:
-                log("ERROR", f"多仓止盈失败，保持long状态")
-            return
+        # 新的BOLL交易策略状态机
+        await self._handle_state_transitions(close_price, current_price, last_up, last_mid, last_dn)
 
-        # 空仓：收盘价突破UP -> 先平空，然后进入"突破UP"状态等待回落确认确认
-        if self.state == "short" and close_price > last_up:
-            close_success = await self.close_and_update_profit(current_price)
-            if close_success:
-                self.state = "breakout_up"
-                log("INFO", f"空仓止损，收盘价突破UP({last_up:.2f}) -> 等待回落至UP")
-            else:
-                log("ERROR", f"空仓止损失败，保持short状态")
+    async def _handle_state_transitions(self, close_price: float, current_price: float, up: float, mid: float, dn: float):
+        """处理状态转换的核心逻辑"""
+        
+        # ==================== 开空逻辑 ====================
+        
+        # 等待开仓状态：收盘价突破UP -> 突破UP等待跌破
+        if self.state == self.STATE_WAITING and close_price > up:
+            self.state = self.STATE_BREAKOUT_UP_WAIT_FALL
+            log("INFO", f"收盘价突破UP({up:.2f}) -> 标记状态：突破UP，等待跌破UP")
             return
-
-        # 空仓止盈：收盘价再次触及DN时先平仓，进入等待反弹确认开多
-        if self.state == "short" and close_price <= last_dn:
-            close_success = await self.close_and_update_profit(current_price)
-            if close_success:
-                self.state = "breakdown_dn"  # 进入等待反弹确认开多的状态
-                log("INFO", f"空仓止盈（收盘价触及DN {last_dn:.2f}），已平仓，等待反弹至DN再考虑开多")
-            else:
-                log("ERROR", f"空仓止盈失败，保持short状态")
+            
+        # 突破UP等待跌破：收盘价跌破UP -> 开空仓
+        if self.state == self.STATE_BREAKOUT_UP_WAIT_FALL and close_price <= up:
+            if await self._place_short_order(current_price):
+                self.state = self.STATE_HOLDING_SHORT
+                log("INFO", f"收盘价跌破UP({up:.2f}) -> 开空仓，标记状态：持仓SHORT")
             return
-
-        # 状态机（允许在当前K线内完成"确认"）
-        if close_price > last_up and self.state != "breakout_up":
-            # 检查价格变化是否足够大
-            if self.last_action_price > 0 and abs(close_price - self.last_action_price) / self.last_action_price < self.price_threshold:
+            
+        # 已止损SHORT等待跌破：收盘价跌破UP -> 再次开空
+        if self.state == self.STATE_SHORT_STOP_LOSS_WAIT_FALL and close_price <= up:
+            if await self._place_short_order(current_price):
+                self.state = self.STATE_HOLDING_SHORT
+                log("INFO", f"收盘价跌破UP({up:.2f}) -> 再次开空，标记状态：持仓SHORT")
+            return
+            
+        # 持仓SHORT的处理
+        if self.state == self.STATE_HOLDING_SHORT:
+            # A. 止损情况：收盘价再次站上UP -> 立即平仓止损
+            if close_price > up:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_SHORT_STOP_LOSS_WAIT_FALL
+                    log("INFO", f"空仓止损：收盘价站上UP({up:.2f}) -> 平仓，标记状态：已止损SHORT，等待跌破UP")
                 return
-            self.last_action_price = close_price
-            self.state = "breakout_up"
-            log("INFO", f"收盘价突破UP，等待回落到UP：{last_up}")
-            return
-        if close_price < last_dn and self.state != "breakdown_dn":
-            # 检查价格变化是否足够大
-            if self.last_action_price > 0 and abs(close_price - self.last_action_price) / self.last_action_price < self.price_threshold:
+                
+            # B. 止盈情况：收盘价跌破中轨
+            if close_price < mid:
+                self.state = self.STATE_SHORT_BELOW_MID_WAIT
+                log("INFO", f"收盘价跌破中轨({mid:.2f}) -> 标记状态：跌破中轨，等待突破中轨或跌破DN")
                 return
-            self.last_action_price = close_price
-            self.state = "breakdown_dn"
-            log("INFO", f"收盘价跌破DN，等待反弹到DN：{last_dn}")
+                
+        # 跌破中轨等待状态的处理
+        if self.state == self.STATE_SHORT_BELOW_MID_WAIT:
+            # 收盘价突破中轨 -> 止盈
+            if close_price > mid:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_SHORT_PROFIT_TAKEN
+                    log("INFO", f"收盘价突破中轨({mid:.2f}) -> 止盈SHORT，标记状态：已止盈SHORT，等待开仓")
+                return
+                
+            # 收盘价跌破DN -> 跌破DN等待反弹
+            if close_price < dn:
+                self.state = self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE
+                log("INFO", f"收盘价跌破DN({dn:.2f}) -> 标记状态：跌破DN，等待反弹DN")
+                return
+                
+        # 跌破DN等待反弹状态的处理
+        if self.state == self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE:
+            # 收盘价反弹至DN -> 止盈SHORT并开多仓
+            if close_price > dn:
+                if await self.close_and_update_profit(current_price):
+                    log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 止盈SHORT")
+                    if await self._place_long_order(current_price):
+                        self.state = self.STATE_HOLDING_LONG
+                        log("INFO", f"开多仓，标记状态：持仓LONG")
+                return
+                
+        # ==================== 开多逻辑 ====================
+        
+        # 等待开仓状态：收盘价跌破DN -> 跌破DN等待反弹
+        if self.state == self.STATE_WAITING and close_price < dn:
+            self.state = self.STATE_BREAKDOWN_DN_WAIT_BOUNCE
+            log("INFO", f"收盘价跌破DN({dn:.2f}) -> 标记状态：跌破DN，等待反弹到DN")
+            return
+            
+        # 跌破DN等待反弹：收盘价反弹至DN -> 开多仓
+        if self.state == self.STATE_BREAKDOWN_DN_WAIT_BOUNCE and close_price > dn:
+            if await self._place_long_order(current_price):
+                self.state = self.STATE_HOLDING_LONG
+                log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 开多仓，标记状态：持仓LONG")
+            return
+            
+        # 已止损LONG等待反弹：收盘价反弹至DN -> 再次开多
+        if self.state == self.STATE_LONG_STOP_LOSS_WAIT_BOUNCE and close_price > dn:
+            if await self._place_long_order(current_price):
+                self.state = self.STATE_HOLDING_LONG
+                log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 再次开多，标记状态：持仓LONG")
+            return
+            
+        # 持仓LONG的处理
+        if self.state == self.STATE_HOLDING_LONG:
+            # A. 止损情况：收盘价跌破DN -> 立即平仓止损
+            if close_price < dn:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_LONG_STOP_LOSS_WAIT_BOUNCE
+                    log("INFO", f"多仓止损：收盘价跌破DN({dn:.2f}) -> 平仓，标记状态：已止损LONG，等待收盘价>DN")
+                return
+                
+            # B. 止盈情况：收盘价突破中轨
+            if close_price > mid:
+                self.state = self.STATE_LONG_ABOVE_MID_WAIT
+                log("INFO", f"收盘价突破中轨({mid:.2f}) -> 标记状态：突破中轨，等待突破UP或跌破中轨")
+                return
+                
+        # 突破中轨等待状态的处理
+        if self.state == self.STATE_LONG_ABOVE_MID_WAIT:
+            # 收盘价突破UP -> 突破UP等待跌破，止盈LONG并开空
+            if close_price > up:
+                if await self.close_and_update_profit(current_price):
+                    log("INFO", f"收盘价突破UP({up:.2f}) -> 止盈LONG")
+                    if await self._place_short_order(current_price):
+                        self.state = self.STATE_HOLDING_SHORT
+                        log("INFO", f"开空仓，标记状态：持仓SHORT")
+                return
+                
+            # 收盘价跌破中轨 -> 止盈LONG
+            if close_price < mid:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_LONG_PROFIT_TAKEN
+                    log("INFO", f"收盘价跌破中轨({mid:.2f}) -> 止盈LONG，标记状态：已止盈，等待开仓")
+                return
+                
+        # ==================== 已止盈状态处理 ====================
+        
+        # 已止盈SHORT状态 -> 重新开始等待开仓
+        if self.state == self.STATE_SHORT_PROFIT_TAKEN:
+            self.state = self.STATE_WAITING
+            log("INFO", "已止盈SHORT -> 重新等待开仓机会")
+            return
+            
+        # 已止盈LONG状态 -> 重新开始等待开仓  
+        if self.state == self.STATE_LONG_PROFIT_TAKEN:
+            self.state = self.STATE_WAITING
+            log("INFO", "已止盈LONG -> 重新等待开仓机会")
             return
 
-        # 回落至UP -> 做空
-        if self.state == "breakout_up" and close_price <= last_up:
-            current_time = int(time.time() * 1000)
-            if current_time - self.last_trade_time < self.trade_cooldown:
-                log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
-                return
-            balance = self.trader.get_balance()
-            if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
-                log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
-                return
-            margin = balance * config.TRADE_PERCENT
-            qty = margin * config.LEVERAGE / current_price
-            await self.trader.place_order("SELL", qty, current_price)
+    async def _place_short_order(self, current_price: float) -> bool:
+        """下空单"""
+        current_time = int(time.time() * 1000)
+        if current_time - self.last_trade_time < self.trade_cooldown:
+            log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
+            return False
+            
+        balance = self.trader.get_balance()
+        if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
+            log("WARNING", "Insufficient balance, invalid price, or invalid leverage for short order")
+            return False
+            
+        margin = balance * config.TRADE_PERCENT
+        qty = margin * config.LEVERAGE / current_price
+        
+        success = await self.trader.place_order("SELL", qty, current_price)
+        if success:
             self.last_trade_time = current_time
-            self.state = "short"
-            log("INFO", f"收盘价回落至UP开空 {qty} @ {current_price}")
-            return
+            log("INFO", f"开空仓成功: {qty:.6f} @ {current_price:.2f}")
+        return success
 
-        # 反弹至DN -> 做多
-        if self.state == "breakdown_dn" and close_price >= last_dn:
-            current_time = int(time.time() * 1000)
-            if current_time - self.last_trade_time < self.trade_cooldown:
-                log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
-                return
-            balance = self.trader.get_balance()
-            if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
-                log("WARNING", "Insufficient balance, invalid price, or invalid leverage for order")
-                return
-            margin = balance * config.TRADE_PERCENT
-            qty = margin * config.LEVERAGE / current_price
-            await self.trader.place_order("BUY", qty, current_price)
+    async def _place_long_order(self, current_price: float) -> bool:
+        """下多单"""
+        current_time = int(time.time() * 1000)
+        if current_time - self.last_trade_time < self.trade_cooldown:
+            log("INFO", f"交易冷却中，距离上次交易{(current_time - self.last_trade_time)/1000:.1f}秒")
+            return False
+            
+        balance = self.trader.get_balance()
+        if balance <= 0 or current_price <= 0 or config.LEVERAGE <= 0:
+            log("WARNING", "Insufficient balance, invalid price, or invalid leverage for long order")
+            return False
+            
+        margin = balance * config.TRADE_PERCENT
+        qty = margin * config.LEVERAGE / current_price
+        
+        success = await self.trader.place_order("BUY", qty, current_price)
+        if success:
             self.last_trade_time = current_time
-            self.state = "long"
-            log("INFO", f"收盘价反弹至DN开多 {qty} @ {current_price}")
-            return
+            log("INFO", f"开多仓成功: {qty:.6f} @ {current_price:.2f}")
+        return success
 
 
 
