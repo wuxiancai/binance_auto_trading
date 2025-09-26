@@ -963,11 +963,19 @@ def api_profits_summary():
         'initial_balance': initial_balance
     }
     
-    # 获取最近2天的数据（当天和昨天），直接从trades表计算
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # 获取实际有交易记录的日期（最多显示最近2天）
+    cur.execute("""
+        SELECT DISTINCT DATE(datetime(ts/1000, 'unixepoch')) as trade_date
+        FROM trades 
+        WHERE side = 'CLOSE_LONG'
+        ORDER BY trade_date DESC
+        LIMIT 2
+    """)
+    
+    trade_dates = [row['trade_date'] for row in cur.fetchall()]
     
     recent_profits = []
-    for date_str in [today, yesterday]:
+    for date_str in trade_dates:
         # 从trades表计算该日期的数据
         cur.execute("""
             SELECT 
