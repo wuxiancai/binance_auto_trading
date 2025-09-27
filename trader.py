@@ -193,14 +193,14 @@ class Trader:
             unrealized_pnl = float(account_info.get('totalUnrealizedProfit', 0))
             
             # 详细记录余额信息
-            log("INFO", f"余额详情 - 钱包总余额: {wallet_balance:.2f}, 可用余额: {available_balance:.2f}, 未实现盈亏: {unrealized_pnl:.2f}")
+            #log("INFO", f"余额详情 - 钱包总余额: {wallet_balance:.2f}, 可用余额: {available_balance:.2f}, 未实现盈亏: {unrealized_pnl:.2f}")
             
             if available_balance <= 0:
                 log("WARNING", f"Available balance is {available_balance}, using wallet balance as fallback")
                 return wallet_balance
             
             # 使用可用余额进行交易
-            log("INFO", f"使用可用余额进行交易: {available_balance:.2f} USDT")
+            #log("INFO", f"使用可用余额进行交易: {available_balance:.2f} USDT")
             return available_balance
         except Exception as e:
             log("ERROR", f"Failed to get balance: {str(e)}")
