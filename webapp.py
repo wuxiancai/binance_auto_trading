@@ -260,6 +260,28 @@ TEMPLATE = """
       color: var(--bamboo-green) !important;
     }
 
+    /* 状态颜色样式 */
+    .log-holding-long {
+      color: var(--bamboo-green) !important;
+      font-weight: 500;
+    }
+
+    .log-holding-short {
+      color: var(--sunset-red) !important;
+      font-weight: 500;
+    }
+
+    .log-waiting {
+      color: var(--ink-black) !important;
+      font-weight: bold;
+    }
+
+    /* 突破信息颜色样式 */
+    .log-breakout {
+      color: #1890ff !important;
+      font-weight: 500;
+    }
+
     .text-success {
       color: var(--bamboo-green) !important;
       font-weight: 500;
@@ -697,6 +719,15 @@ async function refresh(){
       // 为止损和止盈日志添加颜色标识
       logText = logText.replace(/(.*止损.*)/g, '<span class="log-stop-loss">$1</span>');
       logText = logText.replace(/(.*止盈.*)/g, '<span class="log-take-profit">$1</span>');
+      
+      // 为状态添加颜色标识
+      logText = logText.replace(/(.*holding_long.*)/g, '<span class="log-holding-long">$1</span>');
+      logText = logText.replace(/(.*holding_short.*)/g, '<span class="log-holding-short">$1</span>');
+      logText = logText.replace(/(.*waiting.*)/g, '<span class="log-waiting">$1</span>');
+      
+      // 为突破信息添加颜色标识
+      logText = logText.replace(/(.*收盘价突破.*)/g, '<span class="log-breakout">$1</span>');
+      logText = logText.replace(/(.*收盘价跌破.*)/g, '<span class="log-breakout">$1</span>');
       
       document.getElementById('logs').innerHTML = logText;
     }
@@ -1180,9 +1211,11 @@ def api_trades():
         
         # 根据操作类型显示不同的金额信息
         if action == "开仓":
-            # 开仓显示保证金金额（与trader.py中的计算方式一致）
+            # 开仓显示分配的交易保证金（按照engine.py中的逻辑）
+            # 在engine.py中: margin = balance * TRADE_PERCENT, qty = margin * LEVERAGE / price
+            # 所以: margin = qty * price / LEVERAGE (这就是分配给交易的保证金)
             margin = (qty * price) / config.LEVERAGE
-            text = f"{ts_str} {action} 保证金: {margin:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
+            text = f"{ts_str} {action} 分配保证金: {margin:.2f} 方向: {direction} 价格: {price:.2f} 数量: {qty:.4f}"
             
             # 显示开仓手续费（如果有的话）
             if r.get('fee') is not None and r['fee'] > 0:

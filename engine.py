@@ -429,6 +429,10 @@ class Engine:
         margin = balance * config.TRADE_PERCENT
         qty = margin * config.LEVERAGE / current_price
         
+        # 详细记录开仓计算过程
+        log("INFO", f"开空仓计算 - 余额: {balance:.2f}, 交易比例: {config.TRADE_PERCENT}, 杠杆: {config.LEVERAGE}X")
+        log("INFO", f"开空仓计算 - 分配保证金: {margin:.2f}, 价格: {current_price:.2f}, 数量: {qty:.6f}")
+        
         success = await self.trader.place_order("SELL", qty, current_price)
         if success:
             self.last_trade_time = current_time
@@ -449,6 +453,10 @@ class Engine:
             
         margin = balance * config.TRADE_PERCENT
         qty = margin * config.LEVERAGE / current_price
+        
+        # 详细记录开仓计算过程
+        log("INFO", f"开多仓计算 - 余额: {balance:.2f}, 交易比例: {config.TRADE_PERCENT}, 杠杆: {config.LEVERAGE}X")
+        log("INFO", f"开多仓计算 - 分配保证金: {margin:.2f}, 价格: {current_price:.2f}, 数量: {qty:.6f}")
         
         success = await self.trader.place_order("BUY", qty, current_price)
         if success:

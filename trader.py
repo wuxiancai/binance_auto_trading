@@ -187,17 +187,20 @@ class Trader:
                 log("ERROR", "Failed to get account info: futures_account() returned None")
                 return 0.0
             
-            # 获取可用余额（这是真正可用于新交易的金额）
+            # 获取各种余额信息
             available_balance = float(account_info.get('availableBalance', 0))
+            wallet_balance = float(account_info.get('totalWalletBalance', 0))
+            unrealized_pnl = float(account_info.get('totalUnrealizedProfit', 0))
+            
+            # 详细记录余额信息
+            log("INFO", f"余额详情 - 钱包总余额: {wallet_balance:.2f}, 可用余额: {available_balance:.2f}, 未实现盈亏: {unrealized_pnl:.2f}")
             
             if available_balance <= 0:
-                log("WARNING", f"Available balance is {available_balance}, checking wallet balance as fallback")
-                # 如果可用余额为0，尝试获取钱包余额作为备选
-                wallet_balance = float(account_info.get('totalWalletBalance', 0))
-                log("INFO", f"Wallet balance: {wallet_balance}, Available balance: {available_balance}")
+                log("WARNING", f"Available balance is {available_balance}, using wallet balance as fallback")
                 return wallet_balance
             
-            #log("INFO", f"真实交易模式：获取到账户余额 {available_balance} USDT")
+            # 使用可用余额进行交易
+            log("INFO", f"使用可用余额进行交易: {available_balance:.2f} USDT")
             return available_balance
         except Exception as e:
             log("ERROR", f"Failed to get balance: {str(e)}")
