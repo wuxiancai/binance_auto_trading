@@ -1861,11 +1861,11 @@ def run_web():
 
     # 端口检查
     print("检查端口可用性...")
-    _ensure_port_free(5001)
-    print(f"端口 5001 已可用。")
+    _ensure_port_free(5000)
+    print(f"端口 5000 已可用。")
 
     print("启动检查完成。")
-    app.run(host=config.WEB_HOST, port=5001, debug=False)
+    app.run(host=config.WEB_HOST, port=5000, debug=False)
 
 
 if __name__ == "__main__":
