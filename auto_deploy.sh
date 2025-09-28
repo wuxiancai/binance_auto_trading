@@ -226,3 +226,27 @@ echo "部署完成。可运行:"
 echo "source $VENV/bin/activate && (\n  nohup python engine.py >/dev/null 2>&1 &\n  nohup python webapp.py >/dev/null 2>&1 &\n)"
 chmod +x setup_service.sh
 bash setup_service.sh
+
+# NGINX 反向代理配置
+echo ""
+echo "=== NGINX 反向代理配置 ==="
+read -p "是否要配置 NGINX 反向代理和 HTTPS？(y/N): " enable_nginx
+if [[ "$enable_nginx" =~ ^[Yy]$ ]]; then
+    read -p "请输入您的域名 (例如: example.com): " domain_name
+    if [[ -z "$domain_name" ]]; then
+        echo "❌ 域名不能为空，跳过 NGINX 配置"
+    else
+        read -p "请输入您的邮箱地址 (用于 SSL 证书): " email_address
+        if [[ -z "$email_address" ]]; then
+            echo "❌ 邮箱地址不能为空，跳过 NGINX 配置"
+        else
+            echo "正在配置 NGINX 反向代理..."
+            bash setup_nginx.sh "$domain_name" "$email_address"
+        fi
+    fi
+else
+    echo "跳过 NGINX 反向代理配置"
+fi
+
+echo ""
+echo "🎉 部署完成！"
