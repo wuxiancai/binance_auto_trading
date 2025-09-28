@@ -7,6 +7,7 @@ import os
 import socket
 import asyncio
 from flask import Flask, render_template_string, jsonify, request
+from flask_socketio import SocketIO, emit
 import logging
 
 print("基础模块导入完成")
@@ -30,6 +31,7 @@ init_db()
 print("数据库初始化完成")
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 # 工具：UTC+8 时间格式（月-日 时:分）
@@ -50,6 +52,7 @@ TEMPLATE = """
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
   <style>
     :root {
@@ -649,6 +652,8 @@ TEMPLATE = """
           <div class="card-body">
             <!-- 实时K线和BOLL数据显示区域 -->
             <div id="realTimeData" class="real-time-data">
+              <span class="rt-item">实时币价: <span id="rtRealTimePrice" class="rt-value" style="color: blue; font-weight: bold;">--</span></span>
+              <span class="rt-separator">|</span>
               <span class="rt-label">实时K线数据</span>
               <span class="rt-item">开: <span id="rtOpen" class="rt-value">--</span></span>
               <span class="rt-item">高: <span id="rtHigh" class="rt-value">--</span></span>
@@ -703,7 +708,7 @@ let current_price = 0;
 let current_price_open = 0;
 let current_boll = {boll_up: 0, boll_mid: 0, boll_dn: 0};
 
-function updatePriceBoll() {
+function updatePriceAndBoll() {
   const pbDiv = document.getElementById('price_boll');
   if (current_price && current_price > 0) {
     // 判断币价与轨道的关系
@@ -747,13 +752,19 @@ function updatePriceBoll() {
       <div>BOLL 下轨: <span class="boll-lower">${fmt2(current_boll.boll_dn)}</span></div>
       <div>BOLL 同步时间: ${timeStr}</div>
     `;
+    
+    // 同时更新实时数据区域的币价显示
+    const realTimePriceElement = document.getElementById('rtRealTimePrice');
+    if (realTimePriceElement) {
+      realTimePriceElement.textContent = Number(current_price).toFixed(4);
+    }
   } else {
     pbDiv.innerText = '加载中...';
   }
 }
 
 // 定期获取价格和BOLL数据
-async function updatePriceAndBoll() {
+async function fetchPriceAndBoll() {
   try {
     const data = await fetchJSON('/api/price_and_boll');
     if (data && data.price && data.price > 0) {
@@ -764,7 +775,7 @@ async function updatePriceAndBoll() {
         boll_mid: data.boll_mid || 0,
         boll_dn: data.boll_dn || 0
       };
-      updatePriceBoll();
+      updatePriceAndBoll();
     } else {
       console.warn('价格数据无效:', data);
     }
@@ -965,7 +976,7 @@ async function refresh(){
   }
   
   // 更新价格和BOLL数据
-  await updatePriceAndBoll();
+  await fetchPriceAndBoll();
   
   // 更新K线图
   await updateKlineChart();
@@ -1190,6 +1201,17 @@ function updateRealTimeData(klineData, bollData) {
   const latestKline = klineData[klineData.length - 1];
   const latestBoll = bollData[bollData.length - 1];
 
+  // 更新实时币价（使用全局变量current_price，如果没有则使用最新K线收盘价）
+  const realTimePriceElement = document.getElementById('rtRealTimePrice');
+  if (realTimePriceElement) {
+    const displayPrice = (current_price && current_price > 0) ? current_price : (latestKline ? latestKline.close : 0);
+    if (displayPrice > 0) {
+      realTimePriceElement.textContent = Number(displayPrice).toFixed(4);
+    } else {
+      realTimePriceElement.textContent = '--';
+    }
+  }
+
   if (latestKline) {
     // 更新K线数据
     document.getElementById('rtOpen').textContent = Number(latestKline.open).toFixed(4);
@@ -1220,7 +1242,38 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-setInterval(refresh, 2000); refresh();
+// 初始化Socket.IO连接
+const socket = io();
+
+// 监听实时价格更新
+socket.on('price_update', function(data) {
+  if (data && data.price) {
+    // 更新全局价格变量
+    current_price = data.price;
+    
+    // 立即更新实时价格显示
+    const realTimePriceElement = document.getElementById('rtRealTimePrice');
+    if (realTimePriceElement) {
+      realTimePriceElement.textContent = Number(data.price).toFixed(4);
+    }
+    
+    // 更新价格和BOLL显示
+    updatePriceAndBoll();
+  }
+});
+
+// 连接状态监听
+socket.on('connect', function() {
+  console.log('Socket.IO连接已建立');
+});
+
+socket.on('disconnect', function() {
+  console.log('Socket.IO连接已断开');
+});
+
+// 减少轮询频率，主要用于其他数据更新（非价格数据）
+setInterval(refresh, 10000); // 改为10秒更新一次其他数据
+refresh();
 </script>
 </body>
 </html>
@@ -1831,7 +1884,7 @@ def _ensure_port_free(port: int):
 def run_web():
     print("启动检查开始...")
 
-    eng = Engine()
+    eng = Engine(socketio=socketio)  # 传入socketio对象
     asyncio.run(eng.bootstrap())
     
     # 将 engine 实例存储到 app 对象中，供 API 接口使用
@@ -1865,7 +1918,8 @@ def run_web():
     print(f"端口 5000 已可用。")
 
     print("启动检查完成。")
-    app.run(host=config.WEB_HOST, port=5000, debug=False)
+    # 使用socketio.run启动应用，支持WebSocket
+    socketio.run(app, host=config.WEB_HOST, port=5000, debug=False)
 
 
 if __name__ == "__main__":

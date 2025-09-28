@@ -25,12 +25,13 @@ except ImportError:
 
 
 class Engine:
-    def __init__(self):
+    def __init__(self, socketio=None):
         init_db()
         self.trader = Trader()
         self.initial_balance = self.trader.get_balance()
         pos = get_position(config.SYMBOL)
         self.initial_capital = self.initial_balance
+        self.socketio = socketio  # 添加socketio支持
         
         # 新的状态机枚举
         # 等待开仓状态
@@ -41,7 +42,7 @@ class Engine:
         self.STATE_HOLDING_SHORT = "holding_short"  # 持仓SHORT
         self.STATE_SHORT_STOP_LOSS_WAIT_FALL = "short_stop_loss_wait_fall"  # 已止损SHORT，等待跌破UP
         self.STATE_SHORT_BELOW_MID_WAIT = "short_below_mid_wait"  # 跌破中轨，等待突破中轨或跌破DN
-        self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE = "short_below_dn_wait_bounce"  # 跌破DN，等待反弹DN
+        self.STATE_SHORT_WAIT_PROFIT = "short_wait_profit"  # 等待止盈SHORT（收盘价跌破DN后等待实时价格>DN）
         self.STATE_SHORT_PROFIT_TAKEN = "short_profit_taken"  # 已止盈SHORT，等待开仓
         
         # 开多相关状态  
@@ -49,6 +50,7 @@ class Engine:
         self.STATE_HOLDING_LONG = "holding_long"  # 持仓LONG
         self.STATE_LONG_STOP_LOSS_WAIT_BOUNCE = "long_stop_loss_wait_bounce"  # 已止损LONG，等待收盘价>DN
         self.STATE_LONG_ABOVE_MID_WAIT = "long_above_mid_wait"  # 突破中轨，等待突破UP或跌破中轨
+        self.STATE_LONG_WAIT_PROFIT = "long_wait_profit"  # 等待止盈LONG（收盘价突破UP后等待实时价格<UP）
         self.STATE_LONG_PROFIT_TAKEN = "long_profit_taken"  # 已止盈LONG，等待开仓
         
         # 初始化状态
@@ -161,15 +163,19 @@ class Engine:
             print(f"bootstrap 失败: {e}")
 
     async def run_ws(self):
-        await self.bootstrap()
+        # 不需要重复调用bootstrap，因为在run_web中已经调用过了
+        # await self.bootstrap()
         stream = f"{config.SYMBOL.lower()}@kline_{config.INTERVAL}"
         url = f"{KLINE_WS_URL}/{stream}"
+        print(f"正在连接WebSocket: {url}")
         while True:
             try:
                 async with websockets.connect(url, ping_interval=15, ping_timeout=15, max_queue=1000) as ws:
+                    print("WebSocket连接成功，开始接收数据...")
                     await self._consume(ws)
             except Exception as e:  # pragma: no cover
                 log("ERROR", f"ws error: {e}")
+                print(f"WebSocket连接错误: {e}")
                 await asyncio.sleep(3)
                 continue
 
@@ -190,6 +196,7 @@ class Engine:
             self.prices.append(price)
             if self.socketio:
                 self.socketio.emit('price_update', {'price': price})
+                print(f"WebSocket价格更新: {price}, 已通过SocketIO推送")
 
             # 在未收盘期间也进行节流评估，以便尽早产生“突破/跌破”信号
             now = time.time()
@@ -310,27 +317,13 @@ class Engine:
                     log("INFO", f"收盘价突破中轨({mid:.2f}) -> 止盈SHORT，标记状态：已止盈SHORT，等待开仓")
                 return
                 
-            # 收盘价跌破DN -> 跌破DN等待反弹
+            # 收盘价跌破DN -> 标记为等待止盈状态
             if close_price < dn:
-                self.state = self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE
-                log("INFO", f"收盘价跌破DN({dn:.2f}) -> 标记状态：跌破DN，等待反弹DN")
+                self.state = self.STATE_SHORT_WAIT_PROFIT
+                log("INFO", f"收盘价跌破DN({dn:.2f}) -> 标记状态：等待止盈SHORT（等待实时价格>DN）")
                 return
                 
-        # 跌破DN等待反弹状态的处理
-        if self.state == self.STATE_SHORT_BELOW_DN_WAIT_BOUNCE:
-            # 收盘价反弹至DN -> 止盈SHORT并开多仓
-            if close_price > dn:
-                if await self.close_and_update_profit(current_price):
-                    log("INFO", f"收盘价反弹至DN({dn:.2f}) -> 止盈SHORT")
-                    # 新增条件：如果收盘价大于中轨，则不开多仓，转为等待开仓状态
-                    if close_price > mid:
-                        self.state = self.STATE_WAITING
-                        log("INFO", f"收盘价反弹至DN({dn:.2f})但大于中轨({mid:.2f}) -> 不开多仓，转为等待开仓状态")
-                    else:
-                        if await self._place_long_order(current_price):
-                            self.state = self.STATE_HOLDING_LONG
-                            log("INFO", f"收盘价反弹至DN({dn:.2f})且小于等于中轨({mid:.2f}) -> 开多仓，标记状态：持仓LONG")
-                return
+
                 
         # ==================== 开多逻辑 ====================
         
@@ -379,18 +372,10 @@ class Engine:
                 
         # 突破中轨等待状态的处理
         if self.state == self.STATE_LONG_ABOVE_MID_WAIT:
-            # 收盘价突破UP -> 突破UP等待跌破，止盈LONG并开空
+            # 收盘价突破UP -> 标记为等待止盈状态
             if close_price > up:
-                if await self.close_and_update_profit(current_price):
-                    log("INFO", f"收盘价突破UP({up:.2f}) -> 止盈LONG")
-                    # 新增条件：如果收盘价小于中轨，则不开空仓，转为等待开仓状态
-                    if close_price < mid:
-                        self.state = self.STATE_WAITING
-                        log("INFO", f"收盘价突破UP({up:.2f})但小于中轨({mid:.2f}) -> 不开空仓，转为等待开仓状态")
-                    else:
-                        if await self._place_short_order(current_price):
-                            self.state = self.STATE_HOLDING_SHORT
-                            log("INFO", f"收盘价突破UP({up:.2f})且大于等于中轨({mid:.2f}) -> 开空仓，标记状态：持仓SHORT")
+                self.state = self.STATE_LONG_WAIT_PROFIT
+                log("INFO", f"收盘价突破UP({up:.2f}) -> 标记状态：等待止盈LONG（等待实时价格<UP）")
                 return
                 
             # 收盘价跌破中轨 -> 止盈LONG
@@ -398,6 +383,24 @@ class Engine:
                 if await self.close_and_update_profit(current_price):
                     self.state = self.STATE_LONG_PROFIT_TAKEN
                     log("INFO", f"收盘价跌破中轨({mid:.2f}) -> 止盈LONG，标记状态：已止盈，等待开仓")
+                return
+                
+        # ==================== 等待止盈状态处理 ====================
+        
+        # 等待止盈SHORT状态：实时价格大于DN时立即止盈
+        if self.state == self.STATE_SHORT_WAIT_PROFIT:
+            if current_price > dn:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_WAITING
+                    log("INFO", f"实时价格({current_price:.2f})大于DN({dn:.2f}) -> 立即止盈SHORT，标记状态：等待开仓")
+                return
+                
+        # 等待止盈LONG状态：实时价格小于UP时立即止盈
+        if self.state == self.STATE_LONG_WAIT_PROFIT:
+            if current_price < up:
+                if await self.close_and_update_profit(current_price):
+                    self.state = self.STATE_WAITING
+                    log("INFO", f"实时价格({current_price:.2f})小于UP({up:.2f}) -> 立即止盈LONG，标记状态：等待开仓")
                 return
                 
         # ==================== 已止盈状态处理 ====================
