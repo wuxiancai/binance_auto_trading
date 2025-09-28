@@ -6,7 +6,7 @@ import psutil
 import os
 import socket
 import asyncio
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 import logging
 
 print("基础模块导入完成")
@@ -47,6 +47,9 @@ TEMPLATE = """
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
 
   <style>
     :root {
@@ -68,7 +71,7 @@ TEMPLATE = """
     }
 
     body {
-      background: linear-gradient(135deg, var(--paper-bg) 0%, var(--cloud-white) 100%);
+      background: #ffffff;
       padding: 16px;
       font-size: 13px;
       color: var(--ink-black);
@@ -111,7 +114,7 @@ TEMPLATE = """
     }
 
     .card-body {
-      padding: 14px 16px;
+      padding: 5px 5px;
       font-size: 12px;
       line-height: 1.6;
     }
@@ -139,10 +142,10 @@ TEMPLATE = """
       white-space: pre-wrap;
       max-height: 280px;
       overflow: auto;
-      background: var(--paper-bg);
+      background: #ffffff;
       border: 1px solid rgba(151, 165, 166, 0.15);
       border-radius: 6px;
-      padding: 10px;
+      padding: 5px;
       font-family: 'Courier New', monospace;
       font-size: 11px;
       color: var(--ink-gray);
@@ -153,10 +156,10 @@ TEMPLATE = """
     #trades {
       max-height: 280px;
       overflow: auto;
-      background: var(--paper-bg);
+      background: #ffffff;
       border: 1px solid rgba(151, 165, 166, 0.15);
       border-radius: 6px;
-      padding: 10px;
+      padding: 5px;
       margin: 0;
     }
 
@@ -408,6 +411,137 @@ TEMPLATE = """
     .mt-2 {
       margin-top: 8px !important;
     }
+
+    /* K线图样式 */
+    #klineChart {
+      background: #ffffff;
+      border-radius: 6px;
+      border: 1px solid rgba(151, 165, 166, 0.15);
+      padding: 8px;
+    }
+
+    #klineCanvas {
+      border-radius: 4px;
+    }
+
+    /* K线图选择器样式 */
+    #klineLimit {
+      background: var(--cloud-white);
+      border: 1px solid rgba(151, 165, 166, 0.3);
+      color: var(--ink-gray);
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      min-width: 100px;
+    }
+
+    #klineLimit:focus {
+      border-color: var(--mountain-blue);
+      box-shadow: 0 0 0 2px rgba(127, 179, 211, 0.2);
+      outline: none;
+    }
+
+    /* 实时数据显示区域样式 */
+    .real-time-data {
+      background: transparent;
+      border: 1px solid rgba(151, 165, 166, 0.2);
+      border-radius: 6px;
+      padding: 6px 28px;
+      margin-bottom: 0;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      line-height: 1.4;
+    }
+
+    .rt-label {
+      font-weight: 600;
+      color: var(--ink-black);
+      min-width: 80px;
+      flex-shrink: 0;
+    }
+
+    .rt-item {
+      font-weight: 500;
+      color: var(--ink-gray);
+      margin-right: 12px;
+    }
+
+    .rt-value {
+      font-weight: 600;
+      color: var(--ink-black);
+      margin-left: 2px;
+    }
+
+    .rt-separator {
+      color: var(--mist-gray);
+      font-weight: 300;
+      margin: 0 16px;
+      font-size: 14px;
+    }
+
+    /* 响应式调整 */
+    @media (max-width: 768px) {
+      .real-time-data {
+        font-size: 10px;
+        padding: 6px 10px;
+      }
+      
+      .real-time-line {
+        gap: 8px;
+      }
+      
+      .rt-label {
+        min-width: 70px;
+        font-size: 10px;
+      }
+      
+      .rt-item {
+        margin-right: 8px;
+        font-size: 10px;
+      }
+      
+      .rt-separator {
+        margin: 0 8px;
+        font-size: 12px;
+      }
+    }
+
+    /* K线图响应式设计 */
+    @media (max-width: 768px) {
+      #klineChart {
+        height: 300px !important;
+        padding: 6px;
+      }
+      
+      #klineLimit {
+        font-size: 10px;
+        padding: 3px 6px;
+        min-width: 80px;
+      }
+      
+      .card-header .float-end {
+        margin-top: -2px;
+      }
+
+      .data-content {
+        flex-direction: column;
+        gap: 4px;
+      }
+      
+      .data-item {
+        min-width: 100%;
+        text-align: left;
+      }
+    }
+
+    @media (max-width: 576px) {
+      #klineChart {
+        height: 250px !important;
+        padding: 4px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -481,9 +615,6 @@ TEMPLATE = """
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="row g-3 mt-2">
       <div class="col-md-6">
         <div class="card">
           <div class="card-header">交易记录</div>
@@ -499,6 +630,46 @@ TEMPLATE = """
         </div>
       </div>
     </div>
+
+    <!-- K线图和BOLL指标显示区域 -->
+    <div class="row g-3 mt-2">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            K线图 & BOLL指标
+            <div class="float-end">
+              <select id="klineLimit" class="form-select form-select-sm" style="width: auto; display: inline-block;">
+                <option value="50">50根K线</option>
+                <option value="100" selected>100根K线</option>
+                <option value="200">200根K线</option>
+                <option value="300">300根K线</option>
+              </select>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- 实时K线和BOLL数据显示区域 -->
+            <div id="realTimeData" class="real-time-data">
+              <span class="rt-label">实时K线数据</span>
+              <span class="rt-item">开: <span id="rtOpen" class="rt-value">--</span></span>
+              <span class="rt-item">高: <span id="rtHigh" class="rt-value">--</span></span>
+              <span class="rt-item">低: <span id="rtLow" class="rt-value">--</span></span>
+              <span class="rt-item">收: <span id="rtClose" class="rt-value">--</span></span>
+              <span class="rt-separator">|</span>
+              <span class="rt-label">BOLL指标</span>
+              <span class="rt-item">UP: <span id="rtBollUpper" class="rt-value boll-upper">--</span></span>
+              <span class="rt-item">MB: <span id="rtBollMiddle" class="rt-value">--</span></span>
+              <span class="rt-item">DN: <span id="rtBollLower" class="rt-value boll-lower">--</span></span>
+            </div>
+          </div>
+            <div id="klineChart" style="height: 200px; position: relative;">
+              <canvas id="klineCanvas"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
   </div>
 <script>
 // 改进的fetchJSON函数，增加错误处理和重试机制
@@ -795,7 +966,260 @@ async function refresh(){
   
   // 更新价格和BOLL数据
   await updatePriceAndBoll();
+  
+  // 更新K线图
+  await updateKlineChart();
 }
+
+// K线图相关变量和函数
+let klineChart = null;
+let klineData = [];
+
+// 初始化K线图
+function initKlineChart() {
+  const ctx = document.getElementById('klineCanvas').getContext('2d');
+  
+  klineChart = new Chart(ctx, {
+    type: 'candlestick',
+    data: {
+      datasets: [
+        {
+          label: 'K线',
+          data: [],
+          borderColor: 'var(--ink-black)',
+          backgroundColor: 'var(--ink-black)',
+          borderWidth: 1,
+          color: {
+            up: 'var(--bamboo-green)',
+            down: 'var(--sunset-red)',
+            unchanged: 'var(--mist-gray)'
+          },
+          borderColor: {
+            up: 'var(--bamboo-green)',
+            down: 'var(--sunset-red)',
+            unchanged: 'var(--mist-gray)'
+          }
+        },
+        {
+          label: 'BOLL上轨',
+          type: 'line',
+          data: [],
+          borderColor: '#1890ff',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false
+        },
+        {
+          label: 'BOLL中轨',
+          type: 'line',
+          data: [],
+          borderColor: '#1890ff',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false
+        },
+        {
+          label: 'BOLL下轨',
+          type: 'line',
+          data: [],
+          borderColor: '#1890ff',
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode: 'index'
+      },
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          titleColor: '#2c3e50',
+          bodyColor: '#34495e',
+          borderColor: '#95a5a6',
+          borderWidth: 1,
+          cornerRadius: 6,
+          displayColors: true,
+          callbacks: {
+            title: function(context) {
+              if (context && context.length > 0) {
+                return context[0].label || 'N/A';
+              }
+              return 'N/A';
+            },
+            label: function(context) {
+              const dataset = context.dataset;
+              const dataPoint = context.raw;
+              
+              // K线数据显示
+              if (dataset && dataset.label === 'K线') {
+                if (dataPoint && typeof dataPoint === 'object') {
+                  const o = dataPoint.o;
+                  const h = dataPoint.h;
+                  const l = dataPoint.l;
+                  const c = dataPoint.c;
+                  
+                  if (o !== undefined && h !== undefined && l !== undefined && c !== undefined) {
+                    return `K线: 开盘 ${Number(o).toFixed(2)} 最高 ${Number(h).toFixed(2)} 最低 ${Number(l).toFixed(2)} 收盘 ${Number(c).toFixed(2)}`;
+                  }
+                }
+                return 'K线: [数据加载中]';
+              }
+              
+              // BOLL线数据显示
+              if (dataset && dataset.label && dataPoint && dataPoint.y !== undefined) {
+                return `${dataset.label}: ${Number(dataPoint.y).toFixed(2)}`;
+              }
+              
+              return `${dataset ? dataset.label : 'Unknown'}: 无数据`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: {
+            unit: 'hour',
+            displayFormats: {
+              hour: 'MM-dd HH:mm'
+            }
+          },
+          display: true,
+          grid: {
+            color: 'rgba(151, 165, 166, 0.1)'
+          },
+          ticks: {
+            font: {
+              size: 10
+            },
+            color: 'var(--ink-gray)',
+            maxTicksLimit: 10
+          }
+        },
+        y: {
+          display: true,
+          position: 'right',
+          grid: {
+            color: 'rgba(151, 165, 166, 0.1)'
+          },
+          ticks: {
+            font: {
+              size: 10
+            },
+            color: 'var(--ink-gray)',
+            callback: function(value) {
+              return Number(value).toFixed(4);
+            }
+          }
+        }
+      },
+      elements: {
+        point: {
+          hoverBackgroundColor: 'var(--mountain-blue)'
+        }
+      }
+    }
+  });
+}
+
+// 获取K线数据并更新图表
+async function updateKlineChart() {
+  try {
+    const limit = document.getElementById('klineLimit').value || 50;
+    const data = await fetchJSON(`/api/kline_data?limit=${limit}`);
+    
+    if (data && data.klines && data.boll && Array.isArray(data.klines) && Array.isArray(data.boll)) {
+      klineData = data.klines;
+      const bollData = data.boll;
+      
+      // 准备蜡烛图数据
+      const candlestickData = klineData.map(k => ({
+        x: k.time,
+        o: k.open,
+        h: k.high,
+        l: k.low,
+        c: k.close
+      }));
+      
+      // 准备BOLL数据 - 使用时间戳作为x轴
+      const bollUpper = bollData.map(b => ({ x: b.time, y: b.upper }));
+      const bollMiddle = bollData.map(b => ({ x: b.time, y: b.middle }));
+      const bollLower = bollData.map(b => ({ x: b.time, y: b.lower }));
+      
+      // 更新图表数据
+      if (klineChart) {
+        klineChart.data.datasets[0].data = candlestickData;
+        klineChart.data.datasets[1].data = bollUpper;
+        klineChart.data.datasets[2].data = bollMiddle;
+        klineChart.data.datasets[3].data = bollLower;
+        klineChart.update('none'); // 无动画更新
+      }
+
+      // 更新实时数据显示
+      updateRealTimeData(klineData, bollData);
+    } else {
+      console.warn('K线数据或BOLL数据无效:', data);
+    }
+  } catch (e) {
+    console.error('获取K线数据失败:', e);
+  }
+}
+
+// 更新实时数据显示
+function updateRealTimeData(klineData, bollData) {
+  if (!klineData || !bollData || klineData.length === 0 || bollData.length === 0) {
+    return;
+  }
+
+  // 获取最新的K线数据（最后一根K线）
+  const latestKline = klineData[klineData.length - 1];
+  const latestBoll = bollData[bollData.length - 1];
+
+  if (latestKline) {
+    // 更新K线数据
+    document.getElementById('rtOpen').textContent = Number(latestKline.open).toFixed(4);
+    document.getElementById('rtHigh').textContent = Number(latestKline.high).toFixed(4);
+    document.getElementById('rtLow').textContent = Number(latestKline.low).toFixed(4);
+    document.getElementById('rtClose').textContent = Number(latestKline.close).toFixed(4);
+  }
+
+  if (latestBoll) {
+    // 更新BOLL数据
+    document.getElementById('rtBollUpper').textContent = Number(latestBoll.upper).toFixed(4);
+    document.getElementById('rtBollMiddle').textContent = Number(latestBoll.middle).toFixed(4);
+    document.getElementById('rtBollLower').textContent = Number(latestBoll.lower).toFixed(4);
+  }
+}
+
+// K线数量选择器事件监听
+document.addEventListener('DOMContentLoaded', function() {
+  // 初始化K线图
+  initKlineChart();
+  
+  // 监听K线数量选择器变化
+  const klineLimitSelect = document.getElementById('klineLimit');
+  if (klineLimitSelect) {
+    klineLimitSelect.addEventListener('change', function() {
+      updateKlineChart();
+    });
+  }
+});
+
 setInterval(refresh, 2000); refresh();
 </script>
 </body>
@@ -1306,6 +1730,70 @@ def api_balance():
         return jsonify({"balance": 0.0, "error": str(e)})
 
 
+@app.get("/api/kline_data")
+def api_kline_data():
+    """获取 K 线数据和 BOLL 指标用于图表显示"""
+    try:
+        # 获取参数，默认返回最近100条K线数据
+        limit = int(request.args.get('limit', 100))
+        limit = min(limit, 500)  # 限制最大数量
+        
+        # 获取K线数据
+        rows = fetch_klines(config.SYMBOL, limit=limit + config.BOLL_PERIOD)
+        if len(rows) < config.BOLL_PERIOD:
+            return jsonify({
+                'klines': [],
+                'boll': [],
+                'error': 'K线数据不足'
+            })
+        
+        # 转换为DataFrame计算BOLL指标
+        df = pd.DataFrame(rows)
+        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD)
+        
+        # 只返回最近limit条数据
+        df_display = df.tail(limit).copy()
+        mid_display = mid.tail(limit)
+        up_display = up.tail(limit)
+        dn_display = dn.tail(limit)
+        
+        # 格式化K线数据
+        klines = []
+        for i, (idx, row) in enumerate(df_display.iterrows()):
+            klines.append({
+                'time': int(row['open_time']),
+                'open': float(row['open']),
+                'high': float(row['high']),
+                'low': float(row['low']),
+                'close': float(row['close']),
+                'volume': float(row['volume'])
+            })
+        
+        # 格式化BOLL数据
+        boll_data = []
+        for i, (idx, row) in enumerate(df_display.iterrows()):
+            boll_data.append({
+                'time': int(row['open_time']),
+                'upper': float(up_display.iloc[i]),
+                'middle': float(mid_display.iloc[i]),
+                'lower': float(dn_display.iloc[i])
+            })
+        
+        return jsonify({
+            'klines': klines,
+            'boll': boll_data,
+            'symbol': config.SYMBOL,
+            'interval': config.INTERVAL
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'klines': [],
+            'boll': [],
+            'error': str(e)
+        }), 500
+
+
 def _ensure_port_free(port: int):
     """如果端口被占用，立即杀掉占用进程，并等待端口释放。"""
     try:
@@ -1373,11 +1861,11 @@ def run_web():
 
     # 端口检查
     print("检查端口可用性...")
-    _ensure_port_free(int(config.WEB_PORT))
-    print(f"端口 {config.WEB_PORT} 已可用。")
+    _ensure_port_free(5001)
+    print(f"端口 5001 已可用。")
 
     print("启动检查完成。")
-    app.run(host=config.WEB_HOST, port=int(config.WEB_PORT), debug=False)
+    app.run(host=config.WEB_HOST, port=5001, debug=False)
 
 
 if __name__ == "__main__":
