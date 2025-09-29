@@ -1949,6 +1949,71 @@ def api_kline_data():
         }), 500
 
 
+@app.get("/api/realtime_boll")
+def api_realtime_boll():
+    """获取实时BOLL数据用于同步系统"""
+    try:
+        # 获取最新的K线数据用于计算BOLL
+        rows = fetch_klines(config.SYMBOL, limit=config.BOLL_PERIOD + 1)
+        if len(rows) < config.BOLL_PERIOD:
+            return jsonify({
+                'success': False,
+                'error': 'K线数据不足',
+                'boll': None
+            })
+        
+        # 转换为DataFrame计算BOLL指标
+        df = pd.DataFrame(rows)
+        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
+        
+        # 获取最新的BOLL值
+        latest_boll = {
+            'timestamp': int(df.iloc[-1]['open_time']),
+            'upper': float(up.iloc[-1]),
+            'middle': float(mid.iloc[-1]),
+            'lower': float(dn.iloc[-1]),
+            'period': config.BOLL_PERIOD,
+            'std': config.BOLL_STD,
+            'symbol': config.SYMBOL,
+            'interval': config.INTERVAL
+        }
+        
+        return jsonify({
+            'success': True,
+            'boll': latest_boll,
+            'error': None
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'boll': None
+        }), 500
+
+
+@app.post("/api/boll_sync_status")
+def api_boll_sync_status():
+    """接收BOLL同步状态更新"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '无效的请求数据'})
+        
+        # 这里可以记录同步状态到数据库或日志
+        # 暂时只返回成功状态
+        return jsonify({
+            'success': True,
+            'message': '同步状态已更新'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 def _ensure_port_free(port: int):
     """如果端口被占用，立即杀掉占用进程，并等待端口释放。"""
     try:
