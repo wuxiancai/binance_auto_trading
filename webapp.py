@@ -1759,7 +1759,8 @@ def api_trades():
 def api_logs():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT ts, level, message FROM logs ORDER BY ts DESC LIMIT 200")
+    # 排除DEBUG级别的日志，只显示INFO、WARNING、ERROR级别的日志
+    cur.execute("SELECT ts, level, message FROM logs WHERE level != 'DEBUG' ORDER BY ts DESC LIMIT 200")
     rows = cur.fetchall()
     conn.close()
     return "\n".join(

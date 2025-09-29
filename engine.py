@@ -68,8 +68,6 @@ class Engine:
         
         # 用于跟踪状态变化，避免重复日志
         self._last_logged_state = None
-        self._last_logged_price = None
-        self._last_logged_boll = None
 
         # 根据现有持仓恢复状态
         if pos and pos.get("side") == "long":
@@ -289,17 +287,12 @@ class Engine:
             }
             self.socketio.emit('boll_update', boll_data)
 
-        # 只在状态或关键数据发生变化时打印日志，避免重复输出
-        current_boll = (last_up, last_mid, last_dn)
-        price_changed = self._last_logged_price is None or abs(close_price - self._last_logged_price) > 1.0
+        # 只在状态发生变化时打印日志，避免重复输出
         state_changed = self._last_logged_state != self.state
-        boll_changed = self._last_logged_boll != current_boll
         
-        if state_changed or price_changed or boll_changed:
-            log("DEBUG", f"当前状态: {self.state}, 收盘价: {close_price:.2f}, UP: {last_up:.2f}, MID: {last_mid:.2f}, DN: {last_dn:.2f}")
+        if state_changed:
+            log("INFO", f"状态变化: {self.state}, 收盘价: {close_price:.2f}, UP: {last_up:.2f}, MID: {last_mid:.2f}, DN: {last_dn:.2f}")
             self._last_logged_state = self.state
-            self._last_logged_price = close_price
-            self._last_logged_boll = current_boll
 
         # 新的BOLL交易策略状态机
         await self._handle_state_transitions(close_price, current_price, last_up, last_mid, last_dn)
