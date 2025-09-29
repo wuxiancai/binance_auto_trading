@@ -1626,7 +1626,7 @@ def api_price_and_boll():
                     df.loc[df.index[-1], 'low'] = min(df.iloc[-1]['low'], current_price)
                 
                 # 计算实时 BOLL 指标
-                mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD)
+                mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
                 
                 return jsonify({
                     'price': current_price,
@@ -1649,7 +1649,7 @@ def api_price_and_boll():
         
         # 计算 BOLL 指标
         df = pd.DataFrame(rows)
-        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD)
+        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
         price = float(df['close'].iloc[-1])
         
         return jsonify({
@@ -1802,7 +1802,7 @@ def api_kline_data():
         
         # 转换为DataFrame计算BOLL指标
         df = pd.DataFrame(rows)
-        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD)
+        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
         
         # 只返回最近limit条数据
         df_display = df.tail(limit).copy()
