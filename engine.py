@@ -9,7 +9,7 @@ import websockets
 
 from config import config
 from db import init_db, latest_kline_time, insert_kline, fetch_klines, log, get_position, get_daily_profit, update_daily_profit
-from indicators import bollinger_bands
+from indicators import bollinger_bands, calculate_boll_binance_compatible, calculate_boll_dynamic
 from trader import Trader
 from datetime import datetime
 
@@ -60,7 +60,7 @@ class Engine:
         self.last_price: float = 0.0
         # 评估频率节流（用于未收盘K线内的即时评估）
         self._last_eval_ts: float = 0.0
-        self.socketio = None
+        # self.socketio 已在构造函数中设置，不要在这里重置
         self.last_trade_time = 0  # 上次交易时间戳
         self.trade_cooldown = 60000  # 交易冷却时间60秒(毫秒)
         self.last_action_price = 0  # 上次动作价格
@@ -221,29 +221,73 @@ class Engine:
                 await self.evaluate()
 
     async def evaluate(self):
-        rows = fetch_klines(config.SYMBOL, limit=max(60, config.BOLL_PERIOD + 5))
-        if len(rows) < config.BOLL_PERIOD:
-            return
-        df = pd.DataFrame(rows)
-        # 计算基于闭合 K 线的 BOLL，以匹配 Binance 显示
-        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
-        last_mid = float(mid.iloc[-1])
-        last_up = float(up.iloc[-1])
-        last_dn = float(dn.iloc[-1])
+        try:
+            # 使用动态BOLL计算策略
+            boll_result = calculate_boll_dynamic(
+                config.SYMBOL, 
+                config.INTERVAL, 
+                config.BOLL_PERIOD, 
+                config.BOLL_STD
+            )
+            last_up = float(boll_result['up'])
+            last_mid = float(boll_result['mid'])
+            last_dn = float(boll_result['dn'])
+            
+            # 记录使用的计算方法
+            if hasattr(self, '_last_boll_method') and self._last_boll_method != boll_result['method']:
+                log("INFO", f"BOLL计算方法切换: {boll_result['method']} (价格变化: {boll_result['price_change_pct']:.3f}%)")
+            self._last_boll_method = boll_result['method']
+            
+            # 获取K线数据用于价格比较
+            rows = fetch_klines(config.SYMBOL, limit=max(60, config.BOLL_PERIOD + 5))
+            if len(rows) < config.BOLL_PERIOD:
+                return
+            df = pd.DataFrame(rows)
+        except Exception as e:
+            log("ERROR", f"动态BOLL计算失败，回退到币安兼容方法: {e}")
+            try:
+                # 回退到币安兼容方法
+                boll_result = calculate_boll_binance_compatible(
+                    config.SYMBOL, 
+                    config.INTERVAL, 
+                    config.BOLL_PERIOD, 
+                    config.BOLL_STD
+                )
+                last_up = float(boll_result['up'])
+                last_mid = float(boll_result['mid'])
+                last_dn = float(boll_result['dn'])
+                
+                rows = fetch_klines(config.SYMBOL, limit=max(60, config.BOLL_PERIOD + 5))
+                if len(rows) < config.BOLL_PERIOD:
+                    return
+                df = pd.DataFrame(rows)
+            except Exception as e2:
+                log("ERROR", f"币安兼容BOLL计算也失败，回退到原始方法: {e2}")
+                # 最后回退到原始方法
+                rows = fetch_klines(config.SYMBOL, limit=max(60, config.BOLL_PERIOD + 5))
+                if len(rows) < config.BOLL_PERIOD:
+                    return
+                df = pd.DataFrame(rows)
+                # 计算基于闭合 K 线的 BOLL，以匹配 Binance 显示
+                mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
+                last_mid = float(mid.iloc[-1])
+                last_up = float(up.iloc[-1])
+                last_dn = float(dn.iloc[-1])
         
         # 使用K线收盘价而不是实时价格进行比较
         close_price = float(df["close"].iloc[-1])
         current_price = float(self.last_price) if self.last_price != 0 else close_price
         
         if self.socketio:
-            self.socketio.emit('boll_update', {
+            boll_data = {
                 'boll_up': last_up, 
                 'boll_mid': last_mid, 
                 'boll_dn': last_dn,
                 'close_price': close_price,
                 'current_price': current_price,
                 'state': self.state
-            })
+            }
+            self.socketio.emit('boll_update', boll_data)
 
         # 只在状态或关键数据发生变化时打印日志，避免重复输出
         current_boll = (last_up, last_mid, last_dn)
