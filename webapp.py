@@ -556,6 +556,46 @@ TEMPLATE = """
       </div>
       <div id="sysline" class="text-muted"></div>
     </div>
+    <!-- K线图和BOLL指标显示区域 -->
+    <div class="row g-3 mt-2">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            K线图 & BOLL指标
+            <div class="float-end">
+              <select id="klineLimit" class="form-select form-select-sm" style="width: auto; display: inline-block;">
+                <option value="50">50根K线</option>
+                <option value="100" selected>100根K线</option>
+                <option value="200">200根K线</option>
+                <option value="300">300根K线</option>
+              </select>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- 实时K线和BOLL数据显示区域 -->
+            <div id="realTimeData" class="real-time-data">
+              <span class="rt-item">实时币价: <span id="rtRealTimePrice" class="rt-value" style="color: blue; font-weight: bold;">--</span></span>
+              <span class="rt-separator">|</span>
+              <span class="rt-label">实时K线数据</span>
+              <span class="rt-item">开: <span id="rtOpen" class="rt-value">--</span></span>
+              <span class="rt-item">高: <span id="rtHigh" class="rt-value">--</span></span>
+              <span class="rt-item">低: <span id="rtLow" class="rt-value">--</span></span>
+              <span class="rt-item">收: <span id="rtClose" class="rt-value">--</span></span>
+              <span class="rt-separator">|</span>
+              <span class="rt-label">BOLL指标</span>
+              <span class="rt-item">UP: <span id="rtBollUpper" class="rt-value boll-upper">--</span></span>
+              <span class="rt-item">MB: <span id="rtBollMiddle" class="rt-value">--</span></span>
+              <span class="rt-item">DN: <span id="rtBollLower" class="rt-value boll-lower">--</span></span>
+            </div>
+            <div id="klineChart" style="height: 200px; position: relative;">
+              <canvas id="klineCanvas"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 其他卡片区域 -->
     <div class="row g-3">
       <div class="col-md-6">
         <div class="card">
@@ -630,46 +670,6 @@ TEMPLATE = """
         <div class="card">
           <div class="card-header">系统日志</div>
           <div class="card-body"><div id="logs" class="log">加载中...</div></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- K线图和BOLL指标显示区域 -->
-    <div class="row g-3 mt-2">
-      <div class="col-12">
-        <div class="card">
-          <div class="card-header">
-            K线图 & BOLL指标
-            <div class="float-end">
-              <select id="klineLimit" class="form-select form-select-sm" style="width: auto; display: inline-block;">
-                <option value="50">50根K线</option>
-                <option value="100" selected>100根K线</option>
-                <option value="200">200根K线</option>
-                <option value="300">300根K线</option>
-              </select>
-            </div>
-          </div>
-          <div class="card-body">
-            <!-- 实时K线和BOLL数据显示区域 -->
-            <div id="realTimeData" class="real-time-data">
-              <span class="rt-item">实时币价: <span id="rtRealTimePrice" class="rt-value" style="color: blue; font-weight: bold;">--</span></span>
-              <span class="rt-separator">|</span>
-              <span class="rt-label">实时K线数据</span>
-              <span class="rt-item">开: <span id="rtOpen" class="rt-value">--</span></span>
-              <span class="rt-item">高: <span id="rtHigh" class="rt-value">--</span></span>
-              <span class="rt-item">低: <span id="rtLow" class="rt-value">--</span></span>
-              <span class="rt-item">收: <span id="rtClose" class="rt-value">--</span></span>
-              <span class="rt-separator">|</span>
-              <span class="rt-label">BOLL指标</span>
-              <span class="rt-item">UP: <span id="rtBollUpper" class="rt-value boll-upper">--</span></span>
-              <span class="rt-item">MB: <span id="rtBollMiddle" class="rt-value">--</span></span>
-              <span class="rt-item">DN: <span id="rtBollLower" class="rt-value boll-lower">--</span></span>
-            </div>
-          </div>
-            <div id="klineChart" style="height: 200px; position: relative;">
-              <canvas id="klineCanvas"></canvas>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -1661,6 +1661,107 @@ def api_price_and_boll():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/current_boll')
+def api_current_boll():
+    """获取当前BOLL值，用于自动微调程序"""
+    try:
+        # 优先使用 Engine 实例的实时数据
+        if hasattr(app, 'engine_instance') and app.engine_instance:
+            eng = app.engine_instance
+            current_price = eng.last_price if eng.last_price > 0 else 0
+            
+            # 获取最新的 K 线数据并加入实时价格计算 BOLL
+            rows = fetch_klines(config.SYMBOL, limit=config.BOLL_PERIOD)
+            if len(rows) >= config.BOLL_PERIOD and current_price > 0:
+                df = pd.DataFrame(rows)
+                
+                # 如果有实时价格，用实时价格替换最后一条记录的收盘价
+                if len(df) > 0:
+                    df.loc[df.index[-1], 'close'] = current_price
+                    df.loc[df.index[-1], 'high'] = max(df.iloc[-1]['high'], current_price)
+                    df.loc[df.index[-1], 'low'] = min(df.iloc[-1]['low'], current_price)
+                
+                # 计算实时 BOLL 指标
+                mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
+                
+                return jsonify({
+                    'upper': float(up.iloc[-1]),
+                    'middle': float(mid.iloc[-1]),
+                    'lower': float(dn.iloc[-1]),
+                    'timestamp': int(time.time() * 1000),
+                    'period': config.BOLL_PERIOD,
+                    'std': config.BOLL_STD
+                })
+        
+        # 回退到数据库数据
+        rows = fetch_klines(config.SYMBOL, limit=config.BOLL_PERIOD + 1)
+        if len(rows) < config.BOLL_PERIOD:
+            return jsonify({'error': 'K线数据不足'}), 400
+        
+        df = pd.DataFrame(rows)
+        mid, up, dn = bollinger_bands(df, config.BOLL_PERIOD, config.BOLL_STD, ddof=1)
+        
+        return jsonify({
+            'upper': float(up.iloc[-1]),
+            'middle': float(mid.iloc[-1]),
+            'lower': float(dn.iloc[-1]),
+            'timestamp': int(time.time() * 1000),
+            'period': config.BOLL_PERIOD,
+            'std': config.BOLL_STD
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/update_boll_params', methods=['POST'])
+def api_update_boll_params():
+    """更新BOLL参数，用于自动微调程序"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': '请求数据为空'}), 400
+        
+        period = data.get('period')
+        std = data.get('std')
+        
+        # 验证参数
+        if period is None or std is None:
+            return jsonify({'success': False, 'message': '缺少必要参数'}), 400
+        
+        try:
+            period = int(period)
+            std = float(std)
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'message': '参数类型错误'}), 400
+        
+        # 验证参数范围
+        if not (10 <= period <= 50):
+            return jsonify({'success': False, 'message': 'period必须在10-50之间'}), 400
+        
+        if not (0.5 <= std <= 5.0):
+            return jsonify({'success': False, 'message': 'std必须在0.5-5.0之间'}), 400
+        
+        # 更新配置
+        config.BOLL_PERIOD = period
+        config.BOLL_STD = std
+        
+        # 如果有engine实例，也更新其配置
+        if hasattr(app, 'engine_instance') and app.engine_instance:
+            app.engine_instance.boll_period = period
+            app.engine_instance.boll_std = std
+        
+        return jsonify({
+            'success': True,
+            'message': f'BOLL参数已更新: period={period}, std={std}',
+            'period': period,
+            'std': std
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.get("/api/trades")
