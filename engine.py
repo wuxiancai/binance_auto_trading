@@ -88,7 +88,14 @@ class Engine:
             return current_balance
 
     async def bootstrap(self):
+        """
+        初始化系统，确保数据库表结构存在并获取初始K线数据
+        """
         try:
+            # 确保数据库表结构存在
+            init_db()
+            print("数据库表结构初始化完成")
+            
             if UMFutures is None:
                 print("UMFutures 未导入，无法获取历史 K 线。")
                 return
